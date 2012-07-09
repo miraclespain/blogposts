@@ -1,0 +1,88 @@
+<h1>Requesting data on the web using the .NET Framework</h1>
+<span>There are many ways to achieve the same things using the .NET framework, however some solutions are more clean to implement and easier to read than others. Today I stumpled upon two related uses of the framework that made me say: &ldquo;Hmmm&hellip; That&rsquo;s not how I would have done that&rdquo;.</span> <br />
+<br />
+<span><span>First one: On my way to work I was listing to an episode of the&nbsp;<a href="http://www.dotnetrocks.com/">DotNetRocks show</a> mostly because Erik Meijer was on and he usually has some wise things to say(he did this time as well). But the segment in the show that I had to listen to a few times was the part called &ldquo;Better know our framework&rdquo;. Mr. Franklin describes&nbsp; &ldquo;How to download a file via HTTP&rdquo;, he describes the following code:</span> <br />
+</span><span>
+<pre class="code-csharp" name="code">
+HttpWebRequest req = (HttpWebRequest)HttpWebRequest.Create(&quot;http://www.domain.com/file.ext&quot;); 
+req.Method = WebRequestMethods.Http.Get; 
+HttpWebResponse response = (HttpWebResponse)req.GetResponse(); 
+long length = response.ContentLength; 
+Stream s = response.GetResponseStream(); 
+//Process stream using the length 
+</pre>
+<br />
+&nbsp;<span><span><br />
+<span><span><font color="#000000">The thing I thought to be a little strange in this segments was that Mr. Franklin emphasized the casts used in line 1 and 3, but as far as I know the code above would work just as well without the casts and using the abstract class names WebRequest and WebResponse instead of HttpWebRequest and HttpWebResponse.<br />
+<br />
+</font></span><span><font color="#000000"><span>The functionality will be the same because of polymorphism so the GetResponse and GetResponseStream methods is actually called on the HttpWebRequest and HttpWebResponse even though we do not cast to them. All the properties and methods used is available on the abstract WebRequest and WebResponse classes so no need to cast. Because of this the following code would do exactly the same job:</span> <br />
+<pre class="code-csharp" name="code">
+WebRequest req = HttpWebRequest.Create(&quot;http://www.domain.com/file.ext&quot;); 
+req.Method = WebRequestMethods.Http.Get; 
+WebResponse response = req.GetResponse(); 
+long length = response.ContentLength; 
+Stream s = response.GetResponseStream(); 
+//Process stream using the length 
+</pre>
+<span><span><font color="#000000">Actually the structure with the Create method on HttpWebRequest that returns a WebRequest object is more or less <a href="http://www.dofactory.com/Patterns/PatternFactory.aspx">the Factory method design pattern</a> implemented. Besides HttpWebRequest we have FtpWebRequest and a few more as concrete WebRequest that can be created the same way.</font></span></span> <br />
+<br />
+<span><span><font color="#000000"><span>My second &ldquo;incident&rdquo; which happened during some code reviewing at work is somewhat related. I looked at some code that needed to upload files to an FTP server, and a custom FTP library using TcpClient was used. No need for that, as I mentioned before FtpWebRequest exists, so uploading a file can be done with the following code:</span>&nbsp;<br />
+<pre class="code-csharp" name="code">
+FileInfo fileToUpload = new FileInfo(&quot;c:\\path\\to\\file.ext&quot;); 
+WebRequest req = FtpWebRequest.Create(&quot;ftp://domain.dk/folder/&quot; + fileToUpload.Name); 
+req.Credentials = new NetworkCredential(&quot;username&quot;, &quot;password&quot;); 
+req.Method = WebRequestMethods.Ftp.UploadFile; 
+Stream s = req.GetRequestStream();
+//Copy data from file to requeststream 
+const int bufferlen = 2048; 
+byte[] buffer = new byte[bufferlen]; 
+int count = 0; 
+int readbytes; 
+FileStream uploadFilestream = File.OpenRead(fileToUpload.FullName); 
+do{ 
+readbytes = uploadFilestream.Read(buffer, 0, bufferlen);
+s.Write(buffer, 0, readbytes);
+count += readbytes; 
+}while (readbytes != 0); 
+
+uploadFilestream.Close();
+uploadFilestream.Dispose();
+s.Close();
+//Send the file by asking for the response
+WebResponse response = req.GetResponse();
+</pre>
+<br />
+</font></span></span><span><br />
+<br />
+<span>Pretty simple huh, most of this code is moving data from one stream to another, StreamWriter and StreamReader could have been used for that.</span> <br />
+<br />
+<span>Again you see that we use the Create method on FtpWebRequest and work on the abstract types WebResponse and WebRequest, but this time it&rsquo;s obvious why in some cases we want to cast our WebResponse and or WebRequest to their concrete implementation, this could be to get statuscodes from the FtpWebResponse or to specify whether it&rsquo;s a binary transfer or not on the FtpWebRequest.</span> <br />
+<br />
+<span>Well, this discussion started from a five minute segment on dotnetrocks and what I actually ment to write was how I would approach the same problem, &ldquo;How to download a file via HTTP&rdquo; as Mr. Franklin formulated it. The answer to that question is pretty simple: WebClient. WebClient is a wonderful class for simplifying all of the above code. Say I really want to download a file and save to disk, this is the code:</span> </span></font></span></span></span></span><span><span><span><span><font color="#000000"><span><br />
+<br />
+<pre class="code-csharp" name="code">
+WebClient client = new WebClient();
+Client.DownloadFile(&quot;http://www.domain.com/file.ext&quot;, @&quot;c:\testfil.html&quot;); 
+</pre>
+<span><br />
+If I want data in a byte-array the DownloadData method can be used:</span> <br />
+<br />
+<pre class="code-csharp" name="code">
+WebClient client = new WebClient();
+byte[] data = Client.DownloadFile(&quot;http://www.domain.com/file.ext&quot;); 
+</pre>
+<br />
+<span><br />
+A DownloadString method also exists and WebClient supports both Http and Ftp. Uploading is done as easy as downloading. The following line do the same as the earlier example using FtpWebRequest uploading a file to a FTP server requiring credentials:</span> <br />
+<br />
+<pre class="code-csharp" name="code">
+WebClient client = new WebClient();
+client.Credentials = new NetworkCredential(&quot;username&quot;, &quot;password&quot;);
+client.UploadFile(&quot;ftp://domain.com/path/to.file&quot;, &quot;c:\\path\\to\\file.ext&quot;); 
+</pre>
+<span><span><br />
+It does not get any easier than this in my opinion,&nbsp;UploadData and UploadString methods exists as well. Furthermore an <span>&nbsp;</span>UploadValues method exists to upload name/value pairs when for instance making a POST request with data to a webpage.</span> <br />
+<br />
+<span>WebClient internally uses the WebRequest and WebResponse types, so it is just the same functionality in a nice wrapping, but my experience is that it makes code a lot more readable and it saves you some work in copying around using bytearray buffers.</span> <br />
+<br />
+<span>One thing to remember when fetching data from the web in your application is of course Proxy settings, the proxy can be set programmatically on WebClient or the WebRequest, but a better way is to specify proxy settings in the &lt;defaultproxy&gt; element in the &lt;system.net&gt; in your applications configurationfile.</span> </span></span></font></span></span></span></span></span>

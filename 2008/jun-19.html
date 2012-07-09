@@ -1,0 +1,41 @@
+<h1>Generating DTO's from your fully populated domain classes</h1>
+<p>When working with object relational mapping(or even handrolled DAL's) you most often work on fully populated objects. When working in an environment utilizing Data Transfer Object either for transport over the wire or screen bound&#160; DTO's you have to slice or merge your fully populated objects. With LINQ for nHibernate, LINQ for SQL the solution for this is pretty obvious you populate the object using its constructor or object initialisers&#160; in a LINQ query either directly on your data source or on one or more already populated instances.</p>  <p>A quick example using LINQ for nHibernate could be:</p>  <pre class="code-csharp" name="code">var result = from p in db.Products select new ProductDTO {p.ID, p.Name} ;</pre>
+
+<p>(Of course we need to make instances not anonymous types because we need to pass them out of the current scope)</p>
+
+<p>If we are stuck using traditional querying in nHibernate we can accomplish the same using HQL:</p>
+
+<pre class="sql" name="code">select new ProductDTO(p.ID, p.Name) from Product p</pre>
+
+<p>When using this HQL query its important to remember to import your DTO class in the mapping or else you will end up with an error like: </p>
+
+<pre name="code">NHibernate.QueryException : class not found: ProductDTO</pre>
+
+<p>To import it just add &lt;import class=&quot;Name.Space.ProductDTO, Assembly&quot;&gt; right after your hibernate-mapping element. Of course the generating of the DTO's can get much more complex than the samples i have shown. They could span multiple business object requiring complex queries but the concept remains the same.</p>
+
+<p>Okay, so these options are valid only for folks using an LINQ empowered ORM's or frameworks with equivalent functionality to the nHibernate sample above. One thing we could do is to create the DTO's from the fully populated objects. Of course this could be a dangerous decision if you don't already have the objects in the current context and the DTO's require a very little subset of the data, so that's definitely worth noting. That beeing said we could do this in a number of ways all which i can thing of writing myself involves plumbing code. So a couple of days ago I stumbled upon a project called <a href="http://code.google.com/p/otis-lib/">otis</a> a object transformer or Object-to-Object mapper if you prefer that term. </p>
+
+<p>The concept is pretty simple, we can define how one object map to another so if we take our very simple case we can specify a mapping on this form:</p>
+
+<pre class="code-xml" name="code">&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot; ?&gt;
+&lt;otis-mapping xmlns=&quot;urn:otis-mapping-1.0&quot;&gt;
+  &lt;class name=&quot;Name.Space.ProductDTO, Assembly&quot; source=&quot;Name.Space.Product, Assembly&quot; &gt;
+    &lt;member name=&quot;ID&quot; /&gt;
+    &lt;member name=&quot;Name&quot; /&gt;
+  &lt;/class&gt;
+&lt;/otis-mapping&gt;</pre>
+
+<p>In the above case we have the same names on properties in both classes so its pretty simple, but the possibilities in the mapping is many. You can use expression to combine multiple values to one, projections, exchanging certain values etc. I will certainly have to look into the source code of otis and have a look of its capabilities as the documentation is a bit sparse.</p>
+
+<p>To utilize the above mapping we configure the framework and use a generic class to get Assembler classes that can convert our types, its pretty simple:</p>
+
+<pre class="code-csharp" name="code">Product product = ...; //Our fully populated product instance
+Otis.Configuration conf = new Otis.Configuration();
+//Looks for embedded ressource with *.otis.xml ending
+conf.AddAssemblyResources(Assembly.GetExecutingAssembly(), &quot;otis.xml&quot;); 
+//Declare our assembler
+var asm = conf.GetAssembler&lt;ProductDTO, Product&gt;();
+//Use the assembler to get the DTO
+ProductDTO dto = asm.AssembleFrom(product);</pre>
+
+<p>As I said I will definitely dive into the source to explore which features are available and how the transformation is done and what the costs of it is. The main issue I have with the approach is that we could do the same using code and to make it more flexible lambda expressions and have it strongly typed and avoid the verbosity of XML, but lets see how feature rich Otis is before dismissing it.</p>

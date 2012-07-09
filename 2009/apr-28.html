@@ -1,0 +1,186 @@
+<h1>Implementing Generate Constructor refactoring in MonoDevelop</h1>
+<p>
+In this post I will cover how to implement a simple generate constructor refactoring in the Open Source .NET IDE MonoDevelop.  I have recently started using MonoDevelop because I run linux on my laptop for various reasons, most important one of them is that I miss the power of the commandline and all the small tools that is pretty standard on linux. But the IDE lacks some features and this weekend I decided to dig into the codebase to try to add a few refactorings, this post will cover the first one.
+</p>
+<p>
+MonoDevelop is build using .NET and the user interface is based on Gtk. So its a little different structure than WinForms but MonoDevelop comes with a nice designer and the application itself contains a lot of UI code you can be inspired by. Im not much of an UI guy myself so I started in the code. The refactorings in MonoDevelop are all registred in the class MonoDevelop.Ide.Commands.CurrentRefactoryOperationsHandler, in this class a methods exists that generate the commands to be available in the Context menu on the currently chosen type, variable, parameter etc:
+</p>
+<pre class="code-csharp" name="code">
+CommandInfo BuildRefactoryMenuForItem (ProjectDom ctx, ICompilationUnit pinfo, IType eclass, IDomVisitable item, bool includeModifyCommands)
+{
+&nbsp;&nbsp;&nbsp;&nbsp;//Implementation
+}
+</pre>
+<p>
+The <strong>CommandInfo</strong> is in its default implementation a single Command but has a specialisation <strong>CommandInfoSet</strong> that allows us to return multiple commands, so in the implementation of this method we can add several refactorings that is applicable based on the location in code. The parameters passed to the above method is for helping us determine which commands to add and to supply these commands with the information about the code they need to actually perform the refactoring. 
+</p>
+<p>
+<strong>ProjectDom</strong> contains information about the current project that is a collection of files containing classes etc. refactorings that modify the public interface of the current class needs this to ensure references to the public interface can be updated. A good example of this is the Rename refactoring, if you rename a public property on a class you need to update all references to this with the new name.
+</p>
+<p>
+<strong>ICompilationUnit</strong> contains information of the current CompilationUnit which is typically corresponding to the current source file, it contains information about using directives, attributes and types present.
+</p>
+<p>
+<strong>IType</strong> references the class if a interface is clicked so, is currently only there to support the &quot;Implement interface&quot; refactoring which needs to know about both the current class and the interface clicked.
+</p>
+<p>
+<strong>IDomVisitable</strong> is the type that the user is currently on, that is a class, interface, member, enum etc. this is going to be the most important in our implementation because we only work on a single type and not modifying anything outside this.
+</p>
+<p>
+<strong>includeModifyCommands</strong> is a flag that decides whether the CommandInfo&#39;s should include refactorings modifying the type. This is useful for not popping up refactorings modifying types we have no control over.
+</p>
+<p>
+So we need to add logic to the BuildFactoryMenuForItem method to add our refactoring under certain circumstances, more specific when a we have a class marked in the UI, the code for this looks as this:
+</p>
+<p>
+&nbsp;
+</p>
+<pre class="code-csharp" name="code">
+//Make sure the current item is a type
+if(item is IType){ 
+&nbsp;&nbsp;&nbsp;&nbsp;IType type = (IType)item;
+&nbsp;&nbsp;&nbsp;&nbsp;//Make sure that the type is a class and it belongs to a project
+&nbsp;&nbsp;&nbsp;&nbsp;if(type.ClassType == ClassType.Class &amp;&amp; type.SourceProject != null){ 
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Add the command to our CommandInfoSet to be returned (ciset) with its name and a RefactoryOperation delegate
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ciset.CommandInfos.Add(&quot;Generate Constructor&quot;, new RefactoryOperation(refactorer.GenerateConstructor));
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+</pre>
+<p>
+As you can see existing code in the method already have initialized the <strong>ciset</strong> and the <strong>refactorer</strong> and for simplicity i left out localization of the name of the refactoring. The <strong>ciset</strong> initialization is pretty straight forward, however the <strong>refactorer</strong> is interesting: this class contains methods for actually doing the refactoring (or in most cases code that launches the UI that does the refactoring). The refactorer is initialized with pretty much the same parameters as passed to the BuildFactoryMenuForItem:
+</p>
+<p>
+&nbsp;
+</p>
+<pre class="code-csharp" name="code">
+Refactorer refactorer = new Refactorer (ctx, pinfo, eclass, realItem, null);
+</pre>
+<p>
+&nbsp;
+</p>
+<p>
+Only difference is that we pass <strong>realItem</strong> instead of our raw <strong>IDomVisitable</strong> this is because there is some handling of instantiated types and compound types, but that&#39;s out of the scope of this post.
+</p>
+<p>
+The GenerateConstructor method on our refactorer class is pretty simple as all it does is fire up our UI Dialog (which we still need to make):
+</p>
+<p>
+&nbsp;
+</p>
+<pre class="code-csharp" name="code">
+public void GenerateConstructor(){
+&nbsp;&nbsp;&nbsp;&nbsp;GenerateConstructorDialog dialog = new GenerateConstructorDialog(item);
+&nbsp;&nbsp;&nbsp;&nbsp;dialog.Show();
+}
+</pre>
+<p>
+&nbsp;
+</p>
+<p>
+Because we are only manipulating a single class and its contents, and we are only adding new code not modifying existing the only thing we need is the <strong>IDomVisitable</strong> called <strong>item</strong> which is the class we need to modify. With just a blank dialog put into this, we have now hooked into the structure of MonoDevelop and added our refactoring to the context menu:
+</p>
+<p>
+&nbsp;
+</p>
+#thumbnail generatecontructor_context.png The generate constructor context menu
+<p>
+&nbsp;
+</p>
+<p>
+Lets skip the UI part a little while and go to the actual codegeneration. We can utilize the built in code generation features of MonoDevelop namely the class <strong>MonoDevelop.Project.CodeGeneration.CodeRefactorer</strong> which has a method <strong>AddMember(IType cls, System.CodeDom.CodeTypeMember)</strong> we already have the IType that we are currently working on passed to our dialog so we need to construct a <strong>CodeTypeMember</strong> using the <strong>System.CodeDom</strong> classes. 
+</p>
+<p>
+Ideally we would like to decouple this generation of the <strong>CodeTypeMember</strong> completely from our UI code, however to keep in line with the style that the rest of MonoDevelop is written we will keep this coupling. However this is definitively a refactoring candidate that should be done throughout MonoDevelop to decouple the actual refactoringcommands from the UI.
+</p>
+<p>
+I don&#39;t wan&#39;t to bore you with a lot of UI code so here as a screenshot instead:
+</p>
+#thumbnail generateconstructordialog.png The generate constructor dialog
+<p>
+We have some basic functionality a five column flat TreeView with the following columns:
+</p>
+<ol>
+	<li>a checkbox that decides if the field should be in the constructor</li>
+	<li>the name of the field</li>
+	<li>the name of the type</li>
+	<li>the name of the generated parameter that is editable</li>
+	<li>a checkbox that decides if an assignment should be generated in the body of the constructor</li>
+</ol>
+<p>
+Furthermore we can sort the order of the parameters and this will be reflected in the generated code. First thing we need to add the fields from the selected type to the TreeView, this is done with the following code:
+</p>
+<p>
+&nbsp;
+</p>
+<pre class="code-csharp" name="code">
+//Contains our column and the reference to the actual IField
+ListStore store = new ListStore(typeof(bool), typeof(string), typeof(string), typeof(string), typeof(bool),typeof(IField)); 
+//Add the store to the model of our TreeView
+treeview.Model = store;
+//Check if the IDomVisitable is actually a class
+if(item is IType){
+&nbsp;&nbsp;&nbsp;&nbsp;foreach(IField field in ((IType)item).Fields){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Generate a sensible parameter name from the name of the field
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;string paramName = GenerateParamName(field.Name);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Add the field to our storage with some default values
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;store.AppendValues(true, field.Name, field.DeclaringType.Name, paramName, true, field);
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+</pre>
+<p>
+&nbsp;
+</p>
+<p>
+The code is pretty straight forward, however as mentioned it&#39;s not exactly like Windows Forms, but notice the actual MVC approach with us binding the model to the TreeView, actually a very nice way to work with things compared to DataBinding in Windows Forms if you ask me. There is some UI code for generating the columns in the TreeView, handling edits and sorting that i won&#39;t post because it is pretty trivial and because this post isn&#39;t about programming Gtk. Lastly we should ideally retrieve fields from base types as well that could be initialized and provide them in the list if they are assignable from this type (i.e. protected or public). Lets move on to what happens when we click the OK button and we generate the <strong>CodeTypeMember</strong> i mentioned before:
+</p>
+<p>
+&nbsp;
+</p>
+<pre class="code-csharp" name="code">
+//Get the CodeRefactorer from the IDE
+CodeRefactorer refactorer = IdeApp.Workspace.GetCodeRefactorer (IdeApp.ProjectOperations.CurrentSelectedSolution);
+//Get an iterator for our liststore that backs the TreeView
+TreeIter iter;
+if(!store.GetIterFirst(out iter))
+&nbsp;&nbsp;&nbsp;&nbsp;return;
+//Generate our CodeConstructor from System.CodeDom namespace
+var constr = new CodeConstructor();
+//Loop over the fields in the store
+do {
+&nbsp;&nbsp;&nbsp;&nbsp;//Extract information from store
+&nbsp;&nbsp;&nbsp;&nbsp;bool selected = (bool) store.GetValue (iter, colCheckedIndex);
+&nbsp;&nbsp;&nbsp;&nbsp;IField field = (IField) store.GetValue(iter, colFieldIndex);
+&nbsp;&nbsp;&nbsp;&nbsp;bool genassignment = (bool) store.GetValue(iter, colGenAssignmentIndex);
+&nbsp;&nbsp;&nbsp;&nbsp;string paramName = (string) store.GetValue(iter, colParamNameIndex);
+&nbsp;&nbsp;&nbsp;&nbsp;//Check if the user asked us to include this field as parameter
+&nbsp;&nbsp;&nbsp;&nbsp;if(selected){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Generate the parameter and add it to the constructor
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CodeParameterDeclarationExpression param = new CodeParameterDeclarationExpression(field.ReturnType.DecoratedFullName, paramName);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;constr.Parameters.Add(param);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Check if the user asked us to generate a default assignment
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if(genassignment){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Generate assignment on the form &quot;this.fieldname = paramname&quot; and add to constructor body
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CodeAssignStatement expr = new CodeAssignStatement(
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;new CodeFieldReferenceExpression(new CodeThisReferenceExpression(), field.Name),
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;new CodeVariableReferenceExpression(paramName)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;constr.Statements.Add(expr);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//Generate a TODO comment if param not handled and add to and add to constructor body
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CodeCommentStatement comm = new CodeCommentStatement(string.Format(&quot;TODO: Handle parameter {0}&quot;, paramName));
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;constr.Statements.Add(comm);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+} while (store.IterNext (ref iter));
+//Lastly use the refactorer to add the generated constructor to the type
+refactorer.AddMember((IType)item, constr);
+</pre>
+<p>
+&nbsp;
+</p>
+<p>
+This might seem a bit confusing but actually its not that complicated, a fluent interface around <strong>System.CodeDom</strong> would certainly make it easier to read. That&#39;s basically the code for this refactoring.
+</p>
+<p>
+There was one single change I had to make to the <strong>CodeRefactorer</strong> implementation in MonoDevelop because the constructor gets its name from the class, and when using <strong>AddMember</strong> the class name was hard-coded to be temp when generating the text from the <strong>CodeTypeMember</strong>, so instead I changed it to take the name from the supplier IType. On a more general note I was very surprised about MonoDevelop, I had expected code of a higher quality and certainly more tests than it has, but that may be the cost of pushing out a pretty feauture complete IDE within a short timeframe.
+</p>

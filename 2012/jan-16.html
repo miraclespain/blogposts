@@ -1,0 +1,27 @@
+<h1>Generating static blog using Mono's LameBlog</h1>
+
+<p>This blog is generated using <a href="https://github.com/mono/lb">Mono LameBlog</a> a tool created by <a href="http://tirania.org/blog/">Miguel de Icaza</a> to run his own blog. I stumpled upon it in the mono source tree a couple of years back when i was doing some work with Mono. Without offending anyone I think you can say that LameBlog is not a polished piece of software, but it is actually very convinient for a couple of reasons:</p>
+
+<ul>
+<li>Blogentries in your favorite VCS</li>
+<li>Easy offline editing with your favorite editor</li>
+<li>Simple hosting setup, only needs to support basic HTML</li>
+<li>Scalable as it is only HTML</li>
+</ul>
+
+<p>It works by generating the whole site structure from a predefined format of entries stored on your local disk, to do this it uses a template and a configuration file which you can use to tweak apperance (I didn't do this much as you can see). Furthermore the deployment process is hidden in the makefile of the projects and utilizes rsync to push changes to the server.</p> 
+
+<p>So to sum up the workflow this it how it looks like when i write a blog post:</p>
+
+<pre class="shell">
+vim ~/Activity/2012/jan-16.html
+#Write the blog post using HTML and small #-prefixed lines for imagehandling etc
+cd Projects/lb
+make push
+</pre>
+
+<p>Note that i have my posts stored in VCS but commands not included above.</p>
+
+<p>To make the interactive features of a common blog like commenting and search work third party providers is used, namely a Disqus and a Custom Google Search, its a little bit of an experiment and primarily aimed at making blogging so convenient as possible for me so i might do it more often, but we have to see.</p>
+
+<p>Currently this site is hosted on a free-usuage-tier EC2 micro instance at Amazon with an nginx webserver</p>

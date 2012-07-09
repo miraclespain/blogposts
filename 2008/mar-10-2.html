@@ -1,0 +1,35 @@
+<h1>Failing tests against the database</h1>
+<p>
+I found myself trying to fix a bug in the nHibernate source today.With nHibernate&nbsp;its a pleasure to have a lot of unit tests to make sure you (hopefully) haven&#39;t broken anything with your changes. I did what i always do, checked out the nHibernate trunk ran all the tests and no failures. Then i messed around with the source made some changes and wanted to make sure all tests still passed. However in the middle of my fiddling i had dropped the nHibernate database used for unittests and recreated it, but that shouldn&#39;t be a problem. nHibernate creates tables needed during its unit testing so all is good. 
+</p>
+<p>
+Then a test failed, and this test had nothing to do with the things i worked on, so i went to investigate the failing testcase called <em>NHibernate.Test.SubselectFetchTest.SubselectFetchFixture.SubselectFetchWithLimit </em>the testcase tries to fetch 2 rows from the database out of tree added and do various asserts on their children to check that collection&nbsp;fetching using the subselect fetch strategy is working. The assertion that failed was that a wrong number of child elements were on one of the parents, and a little investigation showed that the 2 rows returned was not the ones the test expected. To reproduce the error a test like this could be written: 
+</p>
+<pre class="code-csharp" name="code">
+[Test]
+public void WrongElementReturnedFromLimitQuery()
+{
+	//Save three objects to the database with different names
+	ISession s = OpenSession();
+	Parent p1 = new Parent(&quot;foo&quot;);
+	Parent p2 = new Parent(&quot;bar&quot;);
+	Parent p3 = new Parent(&quot;aaa&quot;);
+	s.Save(p1);
+	s.Save(p2);
+	s.Save(p3);
+
+	s.Flush();
+
+	IList&lt;Parent&gt; parents = s.CreateQuery(&quot;from Parent order by Name desc&quot;)
+				.SetMaxResults(2)
+				.List&lt;Parent&gt;();
+	Assert.Equal(&quot;foo&quot;, parents[0].Name); //Fails expected &quot;foo&quot; was &quot;aaa&quot;
+	Assert.Equal(&quot;bar&quot;, parents[1].Name); // Fails expected &quot;bar&quot; was &quot;foo&quot;
+}
+</pre>
+<p>
+I was a bit puzzled at first, these sort of queries in nHibernate is pretty well tested and as i said i had not changed anything related to this, but to be sure i&nbsp;quickly reverted my changes and ran the tests again. And it&nbsp;still failed...&nbsp;Then i suddenly realised what was wrong and why this test suddenly failed.&nbsp;Take a moment and give me&nbsp;your guess on why...&nbsp; 
+</p>
+<p>
+Yep, you guessed it. My new database running the tests were created using danish collation for sorting and in denmark aa is the same as the danish charecter &aring; which is last in the alphabeth. 
+</p>

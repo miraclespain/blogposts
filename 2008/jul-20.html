@@ -1,0 +1,91 @@
+<h1>Generic pipeline for business objects using Castle Windsor</h1>
+<p>Currently I'm working with a system handling different operations when receiving business documents in object form. Its quite obvious that the code for handling this has evolved to have a lot more responsibilities than it was intended to.</p>  <p>So already having an Inversion of Control container in our stack I thought we could make the operations in the pipeline configurable using the container. To achieve this we need to specify an interface for the tasks in the pipeline, in our case its pretty simple:</p>  <pre class="code-csharp" name="code">public interface IPipelineTask&lt;T&gt;
+{
+    T Perform(T instance);
+}</pre>
+
+<p>Secondly we need to define the pipeline itself, again using a generic interface:</p>
+
+<pre class="code-csharp" name="code">public interface IPipeline&lt;T&gt;
+{
+    T Execute(T instance);
+}</pre>
+
+<p>So basically what I want to accomplish is the ability to ask my Inversion of control container for a pipeline for a certain type and be able to call the Execute method on the instance and have all associated tasks performed on the instance I pass to the method. So the code for handling an incoming object of type Invoice would look like this:</p>
+
+<pre class="code-csharp" name="code">Invoice incomingInvoice = ....;
+ProjectContainer container = new ProjectContainer();
+IPipeline&lt;Invoice&gt; pipeline = container.Resolve&lt;IPipeline&lt;Invoice&gt;&gt;();
+Invoice processedInvoice = pipeline.Execute(incomingInvoice);
+container.Release(pipeline);</pre>
+
+<p>So lets look at the implementation of the generic pipeline that handles executing of each task:</p>
+
+<pre class="code-csharp" name="code">public class Pipeline&lt;T&gt; : IPipeline&lt;T&gt;
+{
+    private IPipelineTask&lt;T&gt;[] tasks;
+    public Pipeline(IPipelineTask&lt;T&gt;[] pipelinetasks)
+    {
+        tasks = pipelinetasks;
+    }
+
+    public T Execute(T instance)
+    {
+        T processedInstance = instance;
+        foreach (var task in tasks)
+        {
+            processedInstance = task.Perform(processedInstance);
+        }
+        return processedInstance;
+    }
+}</pre>
+
+<p>Note the constructor takes an array of IPipelineTasks&lt;T&gt; this is here our Inversion of Control container comes to play and does this for us using constructor dependency injection. </p>
+
+<p>Each task needs to implement the IPipelineTask&lt;T&gt; with its specific business object type:</p>
+
+<pre class="code-csharp" name="code">public class InvoiceNotifier : IPipelineTask&lt;Invoice&gt;
+{
+    private IUserNotifier usernotifier;
+    public InvoiceNotifier(IUserNotifier notifier)
+    {
+        usernotifier = notifier;
+    }
+
+    public Invoice Perform(Invoice instance)
+    {
+        usernotifier.Notify(Notification.IncomingInvoice,
+                            &quot;The invoice with identifier &quot; + instance.ID + &quot; changed state to &quot; + instance.State);
+        return instance;
+    }
+}</pre>
+
+<p>Normally when working with arrays in Castle Windsor we have to specify each service to be part of the array in the configuration, however in our case we want all registered implementations of the specific interface to be passed to the pipeline. To do this we can add a custom sub dependency resolver to castle, in fact we can use <a href="http://hammett.castleproject.org/?p=257">the ArraySubDependencyResolver</a> already written by <a href="http://hammett.castleproject.org/">Castle projects founder (and soon to be Microsoftee) Hammett</a>. With this in place we can make the following configuration and our mission is accomplished and all tasks registered in the configuration will be injected when we request the generic Pipeline of this type. </p>
+
+<pre class="code-xml" name="code">&lt;components&gt;
+   &lt;!--Register the generic pipeline--&gt; 
+  &lt;component
+    id=&quot;bussiness.document.pipeline&quot;
+    service=&quot;Services.IPipeline`1, Services&quot;
+    type=&quot;Services.Pipeline`1, Services&quot;
+    lifetype=&quot;Thread&quot;
+    /&gt;
+   &lt;!--Register our pipeline tasks--&gt;
+  &lt;component
+    id=&quot;invoice.notification&quot;
+    service=&quot;Services.IPipelineTask`1[[Domain.Invoice, Domain]], Services&quot;
+    type=&quot;Services.InvoiceNotifier, Services&quot;
+    lifetype=&quot;Thread&quot;
+    /&gt;
+  &lt;component
+    id=&quot;invoice.reciever&quot;
+    service=&quot;Services.IPipelineTask`1[[Domain.Invoice, Domain]], Services&quot;
+    type=&quot;Services.InvoiceReciever, Services&quot;
+    lifetype=&quot;Thread&quot;
+    /&gt;
+  
+   &lt;!--Registration of services and repositories which our pipeline tasks uses--&gt;
+   ....
+&lt;/components&gt;</pre>
+
+<p>Using this infrastructure custom tasks can be specified easily in the configuration even from other namespaces and assemblies. And the pipeline doesn't need to worry about the dependencies of each Pipeline task, the container handles this</p>

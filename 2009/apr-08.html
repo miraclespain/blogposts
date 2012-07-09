@@ -1,0 +1,99 @@
+<h1>Gendarme Rule based CIL validation - Building your own rules</h1>
+<p><a href="http://www.mono-project.com/Gendarme">Gendarme</a> is a tool for analyzing and finding problems in code in <a href="http://www.ecma-international.org/publications/standards/Ecma-335.htm">ECMA CIL format</a> (For MS only people out there that is the specification of which <a href="http://msdn.microsoft.com/en-us/library/c5tkafs1.aspx">MSIL</a> is an implementation). The tool itself comes with a boatload of useful rules to find problems in your code, one example of a rule is ProvideCorrectArgumentsToFormattingMethodsRule this makes sure that every time you call String.Format the number of arguments specified will correspond to the number specified in the format string: </p>  <p></p>  <pre class="code-csharp" name="code">string.Format(&quot;{0} would like a cup of {1}&quot;, &quot;Jakob&quot;); </pre>
+
+<p></p>
+
+<p>So the rule would find the above and report it to us when we run our assemblies through Gendarme with that rule chosen.&#160; There are a wide array of rules available already but if you feel something is missing either because it is not yet included in Gendarme or perhaps its a rule very specific to a project your working on, you can easily add rules to the framework, that was what it was build for!</p>
+
+<p>Gendarme uses <a href="http://www.mono-project.com/Cecil">Mono.Cecil</a> to inspect the CLI Image, basically the same as <a href="http://msdn.microsoft.com/en-us/library/system.reflection.aspx">Reflection</a> in Microsoft’s BCL does, and furthermore supports modifying it as <a href="http://msdn.microsoft.com/en-us/library/system.reflection.emit.aspx">Reflection.Emit</a> does. However Reflection and Reflection.Emit only expose a subset of the features of CLI Images whereas Mono.Cecil gives you full access. So the code we are using to inspect and check for our rules is similar in functionality to Reflection code as you know it from MS, however there are some differences.</p>
+
+<p>The first thing to do is to write some tests for the rule we want to create. My idea for a rule is that I would like to avoid getters calling themselves which we all know often is a bad idea. So a simple test class to be used for testing this rule for both success and failures could look like this:</p>
+
+<p></p>
+
+<pre class="code-csharp" name="code">public class Item
+{
+    public bool UsesItSelf
+    {
+        get { return UsesItSelf; }
+    }
+
+    public bool DoesNotUseItSelf
+    {
+        get { return false; }
+    }
+}</pre>
+
+<p></p>
+
+<p>Gendarme comes with a bunch of functionality for helping out testing rules in the form of some generic baseclass for our NUnit tests. In our case we want to create a MethodRule (as getters and setters are separate methods in CIL code). So we inherit from MethodRuleTestFixture&lt;T&gt; and get simple functionality to do Assertions on Success or Failure on applying our rule to specific methods. Confused, don't be the test cases are as simple as this:</p>
+
+<p></p>
+
+<pre class="code-csharp" name="code">[TestFixture]
+public class UsePropertyGetterInPropertyGetterTest : MethodRuleTestFixture&lt;UsePropertyGetterInPropertyGetterRule&gt;
+{
+    [Test]
+    public void TestUsesItSelf()
+    {
+        AssertRuleFailure&lt;Item&gt;(&quot;get_UsesItSelf&quot;);
+    }
+
+    [Test]
+    public void TestDoesNotUseItSelf()
+    {
+        AssertRuleSuccess&lt;Item&gt;(&quot;get_DoesNotUseItSelf&quot;);
+    }
+}</pre>
+
+<p></p>
+
+<p>The generic AssertRuleFailure and AssertRuleSucces takes a generic parameter that tells the type under test and the parameter tells which method should be called. When C# is compiled to CIL code the getters and setters are expanded to two methods with get_ and set_ prefixes in case you didn't know. </p>
+
+<p>Next up we need to implement the actual rule as currently our test cases can't even compile. Our rule needs to be a MethodRule so we need to implement the IMethodRule interface from Gendarme, fortunately a base class called Rule exists which does a lot of the hard work for us already so we inherit from that as well. 
+  <br /></p>
+
+<p></p>
+
+<pre class="code-csharp" name="code">[Problem(&quot;This property getter calls itself&quot;)]
+[Solution(&quot;It is probably not supposed to, if it is consider refactoring to make it more readable&quot;)]
+public class UsePropertyGetterInPropertyGetterRule : Rule, IMethodRule
+{
+    public RuleResult CheckMethod(MethodDefinition method)
+    {
+        if (!method.IsGetter)
+            return RuleResult.DoesNotApply;
+
+        if (!method.HasBody)
+            return RuleResult.Success;
+        foreach (Instruction instruction in method.Body.Instructions)
+        {
+            if (instruction.OpCode == OpCodes.Call)
+            {
+                if(instruction.Operand.ToString() == method.ToString())
+                {
+                    Runner.Report(method, Severity.High, Confidence.Total);
+                    return RuleResult.Failure;
+                }
+                
+            }
+        }
+        return RuleResult.Success;
+    }
+}</pre>
+
+<p></p>
+
+<p>The only method we implement is CheckMethod, this is called when Gendarme finds a Method and our rule is enabled, so we get the MethodDefinition and need to return a RuleResult. So we take these steps: </p>
+
+<p>1. We check if this is a Getter, if not our rule does not apply </p>
+
+<p>2. We determine the rule it successful if nobody is available (No body = it doesn't call itself) </p>
+
+<p>3. We loop through instructions in the method body and find out if a Call OpCode exists, if it does we compare the method being called with the method we are currently analyzing, if they are the same we return a failure and report this to the Gendarme Runner </p>
+
+<p>That’s it, we have all green lights from our simple test case. We can now use it in the Gendarme tool, either command line, GUI or in your favorite build system. In case of command line usage (and UI I guess) you can add you own assembly containing your own rules to the rules.xml file found in the location you installed Gendarme.</p>
+
+<p>As a last note I would really recommend that you look into the rules bundled with Gendarme, there are a lot of useful ones that could save you a lot of pain if you happen to not have perfect test coverage.</p>
+
+<p>(Be aware that this is meant as an example only of implementing a rule in Gendarme, the above test suite is slim and the code for the actual rule uses some shortcuts that should be eliminated)</p>

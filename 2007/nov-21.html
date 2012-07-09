@@ -1,0 +1,43 @@
+<h1>Fun with static constructors</h1>
+<p>
+A couple of days ago, a colleague of mine worked on logging in an application, he made a solution where the logging solution had minimal readability impact on the parts of the codebase utilizing the logging framework. However a single setting had to be changed depending on which context we were doing the logging in, so the solution was to inherit from our general logger and set this property in a static constructor on the subclass, the simplified code looked like this: 
+</p>
+<pre class="code-csharp" name="code">
+public class Logger{
+	public static void Debug(string message){
+		Console.WriteLine(message);
+	}
+}
+
+public class SpecificLogger : Logger{
+	static SpecificLogger(){
+		Console.WriteLine(&quot;Specific logger initialized&quot;);
+	}
+}
+</pre>
+<p>
+The question is now, what happens when i call: 
+</p>
+<pre class="code-csharp" name="code">
+SpecificLogger.Debug(&quot;Message to be logged&quot;);
+</pre>
+<p>
+The answer to this question were at first a little surprising for me, the output on my console was: 
+</p>
+<pre class="code-csharp" name="code">
+Message to be logged
+</pre>
+<p>
+but when you think about it the compiler is just being friendly(perhabs a little to friendly some might say) and mapping our static method to the subclass and allowing us to call it there. But actually this call is transformed to a call to the superclass which is also revealed when looking at the IL code for the above call: 
+</p>
+<pre class="code-csharp" name="code">
+L_0001: ldstr &quot;Message to be logged&quot;
+L_0006: call void NamespaceName.Logger::Debug(string)
+</pre>
+<p>
+<br />
+So the call is actually made on the Logger and not on the SpecificLogger hence the static constructor is never called. The same goes the other way around, a static constructor on a superclass is not invoked when calling a static method on its subclass. 
+</p>
+<p>
+So the point of all this is that static methods is always called on the type where they are defined, that is also why static constructors in this case will not be executed when calling a static method not defined on the same class as the static constructor. 
+</p>

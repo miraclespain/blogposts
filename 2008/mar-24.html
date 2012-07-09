@@ -1,0 +1,80 @@
+<h1>Handling lists of checkboxes with MonoRail</h1>
+<p>I have had some discussions with a few people about why i would use MonoRail as it (for these people) seem like a step back from WebForms. First of all its important to understand that WebForms provide a statefull abstraction over something that is in fact stateless. In my opinion this makes something that in most cases is simple overly complicated. And secondly it often results in &quot;funky&quot; errors that is hard to debug because of the many steps involved before actually rendering a web-page to the user(i.e. the page lifecycle).</p>  <p>So to show of a single feature in MonoRail that makes a common scenario very easy i have decided to show you how to handle maintaining a many-to-many relation in a webpage. Assume that we have set up ActiveRecord classes for a Person class and this has a many-to-many relation to an Hobby class. That is one person can have multiple hobbies and different persons can have the same hobbies. To show this when editing a person on a web-page i would like to have a list of all the hobbies and the ability to check/uncheck which hobbies the person im editing has.</p>  <p>Using MonoRail and utilizing the available FormHelper i can get this list of checkboxes populated quite easy. Lets take a look at the Controller first:</p>  <p> <pre class="code-csharp" name="code">public class PersonAdminController : ARSmartDispatcherController{
+	public void List(){
+		PropertyBag[&quot;Persons&quot;] = Person.FindAll();
+	}
+	
+	public void Edit([ARFetch(&quot;id&quot;)] Person person){
+		PropertyBag[&quot;Person&quot;] = person;
+		PropertyBag[&quot;AllHobbies&quot;] = Hobby.FindAll();
+	}
+
+	public void Save([ARDataBind(&quot;Person&quot;, AutoLoadBehaviour.NewInstanceIfInvalidKey)] Person person){
+		person.Save();
+		Flash[&quot;Message&quot;] = &quot;Person &quot; + person.Name + &quot; saved&quot;;
+		RedirectToAction(&quot;List&quot;);
+	}
+
+	public void Delete([ARFetch(&quot;id&quot;)] Person person){
+		person.Delete();
+		Flash[&quot;Message&quot;] = &quot;Person &quot; + person.Name + &quot; deleted&quot;;
+		RedirectToAction(&quot;List&quot;);
+	}
+
+	public void Create(){
+		RenderView(&quot;Edit&quot;);
+	}
+}</pre>
+</p>
+
+<p>So this is all needed to List, Edit, Create and Delete our persons. The List view is pretty straight forward but lets include it anyway for completeness:</p>
+
+<p>
+
+<pre class="code-xml" name="code">
+${UrlHelper.Link(&quot;Create new person&quot;, {&quot;action&quot; : &quot;Create&quot;})}&lt;br /&gt;
+
+&lt;table&gt;
+&lt;% for Person in Persons: %&gt;
+&lt;tr&gt;
+	&lt;td&gt;${Person.Name}&lt;/td&gt;
+	&lt;td&gt;
+		${UrlHelper.Link( &quot;Edit&quot;, {&quot;action&quot; : &quot;Edit&quot;, &quot;querystring&quot; : &quot;id=&quot; + Person.ID })}
+	&lt;/td&gt;
+	&lt;td&gt;
+		${UrlHelper.Link( &quot;Delete&quot;, {&quot;action&quot; : &quot;Delete&quot;, &quot;querystring&quot; : &quot;id=&quot; + Person.ID })}
+	&lt;/td&gt;
+&lt;/tr&gt;
+&lt;% end %&gt;
+&lt;/table&gt;</pre>
+
+</p>
+
+<p>So this lists the persons with their name in a tabular form and exposes our Create, Edit and Delete actions. Now lets get to te interesting part that is the Edit view:</p>
+
+<p>
+
+<pre class="code-xml" name="code">&lt;form action=&quot;Save.castle&quot; method=&quot;post&quot;&gt;
+
+Name:&lt;br /&gt;
+${FormHelper.TextField(&quot;Post.Title&quot;, {&quot;class&quot; : &quot;AdminPostTitle&quot;})}&lt;br /&gt;
+&lt;-- Other fields --&gt;
+
+Hobbies:&lt;br /&gt;
+&lt;% 
+  Items = FormHelper.CreateCheckboxList(&quot;Person.Hobbies&quot;, AllHobbies, {&quot;value&quot; : &quot;ID&quot;, &quot;text&quot; : &quot;Name&quot;})
+  for Item in Items:
+    output Items.Item()
+    output Item.Name
+  end
+%&gt;
+&lt;-- Submit button etc --&gt;
+&lt;/form&gt;</pre>
+
+</p>
+
+<p>This is the interesting part, by naming our CheckboxList &quot;Person.Hobbies&quot; which corresponds to the name of the collection of hobbies on our person MonoRail will automatically check the hobbies associated with this person. And when posting the form the selected hobbies will be bound to the Person parameter in our Save action. So with the above code we have editing of many to many relations.</p>
+
+<p>Using WebForms the above would probably involve manually adding each item to a checkboxlist while comparing with the existing values. Or iterating over the items in the checkboxlist after databinding to set if they should be checked or unchecked. And the code for handling this when saving in WebForms isn't trivial as well.</p>
+
+<p>If you would like to prove me wrong i welcome you to provide your WebForms code for handling the above scenario.</p>

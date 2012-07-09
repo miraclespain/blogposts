@@ -1,0 +1,8 @@
+<h1>Generating passwords</h1>
+<p>So if you need to generate passwords easy you don't have to reinvent the wheel, you can use functionality that the Mempership functionality from ASP.NET already has. On the Membership class in System.Web.Security namespace is a static method for generating passwords. You can specify a length and how many non alphanumeric characters it should contain.</p>  <p>Of course its not exotic in anyway and you can not control the set of characters used (apart from how many should be non alphanumeric) and it does not generate pronounceable passwords. </p>  <pre class="code-csharp" name="code">string password = Membership.GeneratePassword(7, 1);</pre>
+
+<p>The above code will generate a string with seven random characters. Its worth taking note of the second parameter. It specifies the minimum number of non-alphanumerical characters so the generated password can contain more than one in the above case.</p>
+
+<p>If you need to generate pronounceable passwords I would recommend you take a look at the C implementation available here: <a title="http://www.multicians.org/thvv/tvvtools.html#gpw" href="http://www.multicians.org/thvv/tvvtools.html#gpw">http://www.multicians.org/thvv/tvvtools.html#gpw</a> it covers the theory behind using trigraphs and furthermore shows implementation of how to extract trigraphs from a dictionary and how to use this to generate the actual passwords.</p>
+
+<p>But to keep it short, if you just need a random set of chars. Use the features already in the framework instead of rolling your own! The lines saved makes fewer lines that could contain that tricky bug you are hunting a few months from now.</p>

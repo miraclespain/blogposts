@@ -1,0 +1,50 @@
+<h1>Why I love extension points - nHibernate Driver</h1>
+<p>
+I have used nHibernate on linux for some time now without any major problems. The issues I have encountered have infact not been with Mono but with the MySql dialect in nHibernate. One of these where a nasty issue where nHibernate closed the connection to the database before retrieving the newly generated identifier which (in this case) unfortunately is bound to the current database connection. However I made a fix for this in the MySqlDialect and now it should be committet to nHibernate repository be included in next release.
+</p>
+<p>
+Today I was starting a new project writing some tests and wanted to use SQLlite in memory for some pseudo integration testing, Mono has built-in support for SQLite in the Mono.Data.Sqlite assembly however nHibernate isn&#39;t aware of this and hence espects that you have the SQLite.NET assembly and the SQLite binaries present either in your bin directory or in the GAC. To avoid having to deploy these on my linux box which already has a .NET implementation of SQLite&#39;s IDbConnection and IDbCommand i turned to one of the extensions points in nHibernate and made my own Driver as follows:
+</p>
+<pre class="code-csharp" name="code">
+public class MonoSqliteDriver : NHibernate.Driver.ReflectionBasedDriver
+{
+&nbsp;&nbsp;&nbsp;&nbsp;public MonoSqliteDriver() : 
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;base(&quot;Mono.Data.Sqlite&quot;,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&quot;Mono.Data.Sqlite.SqliteConnection&quot;,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&quot;Mono.Data.Sqlite.SqliteCommand&quot;)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;public override bool UseNamedPrefixInParameter {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;get {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return true;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;public override bool UseNamedPrefixInSql {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;get {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return true;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;public override string NamedPrefix {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;get {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return &quot;@&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;public override bool SupportsMultipleOpenReaders {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;get {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return false;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+</pre>
+<p>
+Initially I wanted to derive from the existing SQLiteDriver in nHibernate, but unfortunately the important part is the call to the base constructor on ReflectionBasedDriver, and as SqlLiteDriver hides the constructor of this i can&#39;t hook in and provide the three parameters that I need to change. The things changed is the three strings in the constructor call, &quot;Mono.Data.Sqlite&quot; is the assembly where the IDbConnection and IDbCommand implementations are located, and the other two are the names of the implementation. The overridden properties are taken from the existing SqliteDriver in the nHibernate source.
+</p>
+<p>
+Finally to use our driver we just specify it in our nHibernate configuration
+</p>
+<pre class="code-xml" name="code">
+&lt;add key=&quot;connection.driver_class&quot; value=&quot;Name.Space.MonoSqliteDriver, AssemblyName&quot; /&gt;
+</pre>
+<p>
+Conclusion: Extension points are indeed nice, and the stack I use including nHibernate has a lot of them which makes my life a lot easier
+</p>

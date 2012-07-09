@@ -1,0 +1,145 @@
+<h1>BlogEngine.NET - DAL Architecture</h1>
+<p>So as I wrote a few days ago I have been looking at BlogEngine.NET and considered how I would have designed its lower layers. So lets kick off with the provider that's currently used in BlogEngine.NET for accessing the various storages (XML and RDBMS). The provider is responsible for accessing all data, that is Pages, Categories, Posts etc. Furthermore for each of these types of data it is responsible for the structure of the storage location, transforming the data from storage to objects including loading of related data. In my book this isn't good for extensibility, and as BlogEngine.NET provides multiple point for extending its functionality I would argue that it should be possible to extend its storage mechanism to handle new types of data just as easily. Currently extending the data access would involve adding new members to the provider and its implementations.</p>  <p>So to solve this problem (and a few others I will address shortly) my suggestion would be to make data access classes responsible for a single type only, these can share some common functionality that deals with the structure of the storage when we talk about the XML provider. So basically we want to specify how these classes should look, the most generic approach is represented by this interface.</p>   <pre class="code-csharp" name="code">public interface IRepository&lt;T&gt;
+{
+    //Retrieval
+    T Load(Guid identifier);
+    IList&lt;T&gt; LoadAll();
+
+    //Modification
+    void Save(T instance);
+    void Delete(T instance);
+    void Delete(Guid identifier);
+}</pre>
+
+
+<p>I have made the assumption here that all data has a Guid identifier, of course this could be handled so that we are free to choose the type of our identifier. But for know im satisfied with the Guid-identifier</p>
+
+<p>Instead of implementing our repositories right away we can abstract common details for storage types away in abstract classes. This way the implementation of our actual repositories are as slim as possible. I have (based on the way XML is stored in BlogEngine.NET) chosen two different storage types for XML and implemented the abstract classes SingleFileRepository&lt;T&gt; and SingleFolderRepository&lt;T&gt;. The first one handles storage of data types where all instances are in a single XML file, the second one handles storage of data types where each instance has its own XML file all contained in a folder. So the basic responsibility of these two classes is to handle details of the storage, that is the structure on disk and the structure in the files. Let me remind you that these abstract classes are only for simplifying the implementation of the actual repositories, if development later requires changing minor details we can override or even change the implementations on these, and if we want to start from scratch without the assumptions build into these abstract classes we can implement IRepository&lt;T&gt; any way we would like. This gives great flexibility in how different data is stored and the opportunity for code reusability is very much still there.</p>
+
+<p>Lets take a look at the code for SingleFolderRepository: </p>
+
+
+<pre class="code-csharp" name="code">public abstract class SingleFolderRepository&lt;T&gt; : IRepository&lt;T&gt; where T : class, IEntity
+{
+    protected readonly IBlogSettings settings;
+    protected readonly IObjectXmlConverter&lt;T&gt; converter;
+    protected readonly string storagelocation;
+
+    public SingleFolderRepository(IBlogSettings settings, IObjectXmlConverter&lt;T&gt; converter)
+    {
+        this.settings = settings;
+        this.converter = converter;
+        this.storagelocation = settings.StorageLocationFor(typeof (T));
+    }
+
+    public T Load(Guid identifier)
+    {
+        string path = Path.Combine(storagelocation, identifier + &quot;.xml&quot;);
+        FileInfo datafile = new FileInfo(path);
+        if (datafile.Exists)
+        {
+            return converter.Build(GetXml(datafile));
+        }
+        return null;
+    }
+
+    private string GetXml(FileInfo datafile)
+    {
+        string xml = string.Empty;
+        using (StreamReader sr = new StreamReader(datafile.Open(FileMode.Open, FileAccess.Read, FileShare.Read)))
+        {
+            xml = sr.ReadToEnd();
+        }
+        return xml;
+    }
+
+    public IList&lt;T&gt; LoadAll()
+    {
+        List&lt;T&gt; instances = new List&lt;T&gt;();
+        DirectoryInfo datadirectory = new DirectoryInfo(storagelocation);
+        if (datadirectory.Exists)
+        {
+            foreach (FileInfo datafile in datadirectory.GetFiles(&quot;*.xml&quot;))
+            {
+                instances.Add(converter.Build(GetXml(datafile)));
+            }
+        }
+        return instances;
+    }
+
+    public void Save(T instance)
+    {
+        if (converter.IsNew(instance))
+        {
+            instance.Identifier = Guid.NewGuid();
+        }
+
+        string path = Path.Combine(storagelocation, instance.Identifier + &quot;.xml&quot;);
+        using (FileStream fs = File.Open(path, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            using (StreamWriter writer = new StreamWriter(fs))
+            {
+                writer.Write(converter.Flatten(instance));
+                writer.Flush();
+            }
+        }
+    }
+
+    public void Delete(T instance)
+    {
+        Delete(instance.Identifier);
+    }
+
+    public void Delete(Guid identifier)
+    {
+        string path = Path.Combine(storagelocation, identifier + &quot;.xml&quot;);
+        File.Delete(path);
+    }
+}</pre>
+
+
+<p>So notice the constructor. The dependencies that this class has is passed into the contructor so before we can use the repository we need settings for the blog and an IObjectXmlConverter for the type that the repository handles. The IObjectXmlConverter handles flattening of objects to XML and building objects from XML. Below is an example an implementation of this.</p>
+
+<pre class="code-csharp" name="code">public class CategoryConverter : IObjectXmlConverter&lt;Category&gt;
+{
+    public Category Build(string xml)
+    {
+        XmlDocument doc = new XmlDocument();
+        doc.LoadXml(xml);
+        Category c = new Category();
+        c.Identifier = new Guid(doc.SelectSingleNode(&quot;/category/&quot;).Attributes[&quot;id&quot;].InnerText);
+        c.Name = doc.SelectSingleNode(&quot;/category/&quot;).InnerText;
+        return c;
+    }
+
+    public string Flatten(Category instance)
+    {
+        return
+            XmlOutput.Create().XmlDeclaration()
+                .Node(&quot;category&quot;)
+                .Attribute(&quot;id&quot;, instance.Identifier.ToString())
+                .InnerText(instance.Name).GetOuterXml();
+    }
+}</pre>
+
+<p>So this is where the mapping between the datastore and the objects happen, of course error handling should be in place here if we expect missing values in the data we load.</p>
+
+<p>With this change in structure presented above we have seperated concerns of the data access into smaller reusable components, furthermore in my book this makes the code easier to extend and understand but thats a subjective matter.</p>
+
+<p>So now its time to specify the actual repositories, we could settle for the functionality present on our generic IRepository but often we want more specific functionality for each datatype for instance fetching all posts in a specific category, paging of posts and so forth. So for each data type we define an interface with its actions. Currently in BlogEngine.NET much of this functionality is done in various places for instance sorting, filtering and paging. I would like to have our repositories responsible for this because the most efficient way to do these things depends on the type of storage. That is paging would for instance be done different for XML storage and RDBMS storage.</p>
+
+<p>So as an example we could make our repository for posts have an interface like this:</p>
+
+<pre class="code-csharp" name="code">public interface IPostRepository : IRepository&lt;Post&gt;
+{
+    PageableList&lt;Post&gt; GetPage(int pagesize, int pagenum);
+    PageableList&lt;Post&gt; GetPageInCategory(int category, int pagesize, int pagenum);
+    PageableList&lt;Post&gt; GetPageWithTag(int tag, int pagesize, int pagenum);
+    PageableList&lt;Post&gt; GetPageFromMonth(int month, int year, int pagesize, int pagenum);
+}</pre>
+
+<p>Notice that we might need more methods, but this illustrates some examples on how we let the repository handle paging so it can optimize it based on the data storage.</p>
+
+<p>The actual implementation in the XML storage can be optimized but for now we load all data and do it in memory like BlogEngine.NET currently does. (I will discuss caching in a later post)</p>
+
+<p>The form and responsibility of our repositories is now pretty clear. You might have noticed that I have passed classes dependencies through their constructor. To avoid having to construct these dependencies myself I will use an Inversion of Control container that manages these dependencies for me. Furthermore configuration of the IoC container is what helps use interchange the repositiores for XML and RDBMS.</p>

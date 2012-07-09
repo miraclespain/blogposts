@@ -1,0 +1,34 @@
+<h1>ASP.NET MVC JsonResult on Mono and the JavaScriptSerializer</h1>
+
+<p>I have been doing a little work on an ASP.NET MVC solution on Visual Studio and Windows and then a little later i moved it to MonoDevelop on OS X to continue development. Opening the Visual Studio solution file in MonoDevelop just works and compiling the code has no issues, however running it I got the following exception:</p>
+
+<pre class="shell">
+Cannot cast from source type to destination type.
+
+System.InvalidCastException: Cannot cast from source type to destination type.
+  at System.Web.Script.Serialization.JavaScriptSerializer..ctor (System.Web.Script.Serialization.JavaScriptTypeResolver resolver, Boolean registerConverters) [0x0000d] in /private/tmp/monobuild/build/BUILD/mono-2.10.8/mcs/class/System.Web.Extensions/System.Web.Script.Serialization/JavaScriptSerializer.cs:66 
+  at System.Web.Script.Serialization.JavaScriptSerializer..cctor () [0x00000] in &lt;filename unknown&gt;:0 
+</pre>
+
+
+<p>After a little investigation I found that it is mixed up DLL's causing this. You can see on the screenshot below two versions of System.Web.Extensions.dll is loaded both 3.5 and 4.0.</p>
+
+#thumbnail SystemWebExtensionsTwice.png System.Web.Extensions loaded twice in two different versions
+
+
+<p>The reason for this seems to be that the System.Web.Mvc.dll is compiled referencing the 3.5 version and not the 4.0 version so we can easily fix this with a redirect using assemblyBinding element in our web.config:</p>
+
+<pre class="code-xml">
+&lt;runtime&gt;
+	&lt;assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1"&gt;
+		&lt;dependentAssembly&gt;
+			&lt;assemblyIdentity name="System.Web.Extensions" culture="neutral" publicKeyToken="31bf3856ad364e35" /&gt;
+			&lt;bindingRedirect oldVersion="3.5.0.0" newVersion="4.0.0.0"/&gt;
+		&lt;/dependentAssembly&gt;
+	&lt;/assemblyBinding&gt;
+&lt;/runtime&gt;
+</pre>
+
+<p>And that should make you able to proceed with your ASP.NET MVC development with Mono</p>
+
+<p>UPDATE: This is already reported as a bug describing the workaround aswell: <a href="https://bugzilla.novell.com/show_bug.cgi?id=664813">https://bugzilla.novell.com/show_bug.cgi?id=664813</a></p>

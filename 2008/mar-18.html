@@ -1,0 +1,217 @@
+<h1>Implementing custom types in nHibernate</h1>
+<p>nHibernate can persist a lot of different datatypes, of course all the basic types in the .NET framework and some more sophisticated. However if you feel some type is missing go ahead and implement it. All that is required is that your type implements the IUserType interface shown below:</p>  <p></p>  <pre class="code-csharp" name="code">public interface IUserType
+{
+	/// &lt;summary&gt;
+	/// The SQL types for the columns mapped by this type. 
+	/// &lt;/summary&gt;
+	SqlType[] SqlTypes { get; }
+
+	/// &lt;summary&gt;
+	/// The type returned by &lt;c&gt;NullSafeGet()&lt;/c&gt;
+	/// &lt;/summary&gt;
+	System.Type ReturnedType { get; }
+
+	/// &lt;summary&gt;
+	/// Compare two instances of the class mapped by this type for persistent &quot;equality&quot;
+	/// ie. equality of persistent state
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;x&quot; /&gt;&lt;/param&gt;
+	/// &lt;param name=&quot;y&quot; /&gt;&lt;/param&gt;
+	/// &lt;returns&gt;&lt;/returns&gt;
+	bool Equals(object x, object y);
+
+	/// &lt;summary&gt;
+	/// Get a hashcode for the instance, consistent with persistence &quot;equality&quot;
+	/// &lt;/summary&gt;
+	int GetHashCode(object x);
+
+	/// &lt;summary&gt;
+	/// Retrieve an instance of the mapped class from a JDBC resultset.
+	/// Implementors should handle possibility of null values.
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;rs&quot; /&gt;a IDataReader&lt;/param&gt;
+	/// &lt;param name=&quot;names&quot; /&gt;column names&lt;/param&gt;
+	/// &lt;param name=&quot;owner&quot; /&gt;the containing entity&lt;/param&gt;
+	/// &lt;returns&gt;&lt;/returns&gt;
+	/// &lt;exception cref=&quot;HibernateException&quot;&gt;HibernateException&lt;/exception&gt;
+	object NullSafeGet(IDataReader rs, string[] names, object owner);
+
+	/// &lt;summary&gt;
+	/// Write an instance of the mapped class to a prepared statement.
+	/// Implementors should handle possibility of null values.
+	/// A multi-column type should be written to parameters starting from index.
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;cmd&quot; /&gt;a IDbCommand&lt;/param&gt;
+	/// &lt;param name=&quot;value&quot; /&gt;the object to write&lt;/param&gt;
+	/// &lt;param name=&quot;index&quot; /&gt;command parameter index&lt;/param&gt;
+	/// &lt;exception cref=&quot;HibernateException&quot;&gt;HibernateException&lt;/exception&gt;
+	void NullSafeSet(IDbCommand cmd, object value, int index);
+
+	/// &lt;summary&gt;
+	/// Return a deep copy of the persistent state, stopping at entities and at collections.
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;value&quot; /&gt;generally a collection element or entity field&lt;/param&gt;
+	/// &lt;returns&gt;a copy&lt;/returns&gt;
+	object DeepCopy(object value);
+
+	/// &lt;summary&gt;
+	/// Are objects of this type mutable?
+	/// &lt;/summary&gt;
+	bool IsMutable { get; }
+
+	/// &lt;summary&gt;
+	/// During merge, replace the existing (&lt;paramref name=&quot;target&quot; /&gt;) value in the entity
+	/// we are merging to with a new (&lt;paramref name=&quot;original&quot; /&gt;) value from the detached
+	/// entity we are merging. For immutable objects, or null values, it is safe to simply
+	/// return the first parameter. For mutable objects, it is safe to return a copy of the
+	/// first parameter. For objects with component values, it might make sense to
+	/// recursively replace component values.
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;original&quot; /&gt;the value from the detached entity being merged&lt;/param&gt;
+	/// &lt;param name=&quot;target&quot; /&gt;the value in the managed entity&lt;/param&gt;
+	/// &lt;param name=&quot;owner&quot; /&gt;the managed entity&lt;/param&gt;
+	/// &lt;returns&gt;the value to be merged&lt;/returns&gt;
+	object Replace(object original, object target, object owner);
+
+	/// &lt;summary&gt;
+	/// Reconstruct an object from the cacheable representation. At the very least this
+	/// method should perform a deep copy if the type is mutable. (optional operation)
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;cached&quot; /&gt;the object to be cached&lt;/param&gt;
+	/// &lt;param name=&quot;owner&quot; /&gt;the owner of the cached object&lt;/param&gt;
+	/// &lt;returns&gt;a reconstructed object from the cachable representation&lt;/returns&gt;
+	object Assemble(object cached, object owner);
+
+	/// &lt;summary&gt;
+	/// Transform the object into its cacheable representation. At the very least this
+	/// method should perform a deep copy if the type is mutable. That may not be enough
+	/// for some implementations, however; for example, associations must be cached as
+	/// identifier values. (optional operation)
+	/// &lt;/summary&gt;
+	/// &lt;param name=&quot;value&quot; /&gt;the object to be cached&lt;/param&gt;
+	/// &lt;returns&gt;a cacheable representation of the object&lt;/returns&gt;
+	object Disassemble(object value);
+}</pre>
+
+<p></p>
+
+<p>Most of these is comments(which are rather useful and hinting the implementation), actually you need to implement only 8 methods and a couple of properties. The most straightforward thing to implement is immutable types, one good example is System.Uri which is immutable and can keep an Uri. When we store this in our database we can just save it as a string but in our application it would be nice to get features for getting the domain etc. and these are built into the System.Uri class so why not make nHibernate return instances of this instead of strings. So lets go ahead and implement the IUserType interface:</p>
+
+<pre class="code-csharp" name="code">public class UriType : IUserType
+{
+    public SqlType[] SqlTypes
+    {
+        get
+        {
+            //We store our Uri in a single column in the database that can contain a string
+            SqlType[] types = new SqlType[1];
+            types[0] = new SqlType(DbType.String);
+            return types;
+        }
+    }
+
+    public System.Type ReturnedType
+    {
+        get { return typeof(Uri); }
+    }
+
+    public new bool Equals(object x, object y)
+    {
+        //Uri implements Equals it self by comparing the Uri's based 
+        // on value so we use this implementation
+        if (x == null)
+        {
+            return false;
+        }else
+        {
+            return x.Equals(y);
+        }
+    }
+
+    public int GetHashCode(object x)
+    {
+        //Again URL itself implements GetHashCode so we use that
+        return x.GetHashCode();
+    }
+
+    public object NullSafeGet(IDataReader rs, string[] names, object owner)
+    {
+        //We get the string from the database using the NullSafeGet used to get strings 
+        string uriString = (string) NHibernateUtil.String.NullSafeGet(rs, names[0]);
+        
+        //And save it in the Uri object. This would be the place to make sure that your string 
+        //is valid for use with the System.Uri class, but i will leave that to you
+        Uri result = new Uri(uriString);
+        return result;
+    }
+
+    public void NullSafeSet(IDbCommand cmd, object value, int index)
+    {
+        //Set the value using the NullSafeSet implementation for string from NHibernateUtil
+        if (value == null)
+        {
+            NHibernateUtil.String.NullSafeSet(cmd, null, index);
+            return;
+        }
+        value = value.ToString(); //ToString called on Uri instance
+        NHibernateUtil.String.NullSafeSet(cmd, value, index);
+    }
+
+    public object DeepCopy(object value)
+    {
+        //We deep copy the uri by creating a new instance with the same contents
+        if (value == null) return null;
+        return new Uri(value.ToString());
+    }
+
+    public bool IsMutable
+    {
+        get { return false; }
+    }
+
+    public object Replace(object original, object target, object owner)
+    {
+        //As our object is immutable we can just return the original
+        return original;
+    }
+    
+    public object Assemble(object cached, object owner)
+    {
+        //Used for casching, as our object is immutable we can just return it as is
+        return cached;
+    }
+
+    public object Disassemble(object value)
+    {
+        //Used for casching, as our object is immutable we can just return it as is
+        return value;
+    }
+}</pre>
+
+<p>So that's it, pretty straight forward as we have an immutable type and using an already existing type as storage. This allows us to use this types NullSafeSet/NullSafeGet implementations.</p>
+
+<p>To use this in our application and write code like this:</p>
+
+<p></p>
+
+<pre class="code-csharp" name="code">Website intellectWebsite = new Website();
+intellectWebsite.Url = new Uri(&quot;http://www.intellect.dk/&quot;);
+sess.Save(intellectWebsite);</pre>
+
+<p></p>
+
+<p>We have to specify our type in the mapping file, its pretty easy we just have to tell nHibernate what type our property is, that is UriType in this case:</p>
+
+<p></p>
+
+<pre class="code-xml" name="code">&lt;class name=&quot;Website&quot;&gt;
+	&lt;id name=&quot;ID&quot;&gt;
+		&lt;generator class=&quot;native&quot; /&gt;
+	&lt;/id&gt;
+	&lt;!-- this is the interresting line the type supplied is the name of our class with full namespace and the assembly it resides in --&gt;
+	&lt;property name=&quot;Url&quot; type=&quot;MyCompany.MyApplication.UriType, MyCompany.MyApplication&quot;&gt;&lt;/property&gt;
+&lt;/class&gt;</pre>
+
+<p></p>
+
+<p>Thats it, now nHibernate knows how to persist an Uri and how to retrieve it again.</p>

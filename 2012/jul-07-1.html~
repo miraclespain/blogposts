@@ -1,0 +1,31 @@
+<h1>Mono: Internal compiler error</h1>
+
+<p>My current half hobby and half business project involves me building and running the OSS CMS Umbraco on Mono. The building part is not strictly neccesary so i guess that is the hobby part, the running Umbraco on mono however is something that one of my clients would like to do. This is not the first time that I take a piece of "of-the-shelf" .NET software and try to build and run it on mono, previously I have build amongts others nHibernate using Mono (and MonoDevelop). A few timer I have encountered the not so helpful error: "Internal compiler error" followed by different error messages. In the Umbraco project I encountered it on the form:</p> 
+
+<pre class="shell">
+Internal compiler error: Method not found: 'UmbracoExamine.ContentExtensions.ToXDocument'.
+</pre>
+
+<p>It was followed by a related error stating that an invalid typeconversion was tried in the same line as the above error is reported, there is multiple ways to figure out what is going on, one is from MonoDevelop by poking around with the built-in Assembly Browser and observe if the method mentioned in the error is present and if the current project actually references the assembly and all its references are satisfied. However there is an easier way (at least if you ask me). When building in MonoDevelop the build output actually prints the actual compiler commandline used to build each project in the solution, its a massive string so i shortened it, on my OS X system it looks like this:</p>
+
+<pre class="shell">
+/Library/Frameworks/Mono.framework/Versions/2.10.9/bin/dmcs /noconfig "/out:/Users/jta/Projects/umbracov4/umbraco_a7f6b8c00dd8/src/umbraco.presentation/bin/umbraco.dll" .............
+</pre>
+
+<p>As you can see its a call to the dmcs compiler that builds the "umbraco.dll" after that follows a list of all files in the project and all references. If we copy this to a shell and set the MONO_LOG_LEVEL environment variable to debug we will get a load of information about what the compiler is actually doing and what our "Internal compiler error" actually is.</p>
+
+<pre>
+export MONO_LOG_LEVEL=debug; /Library/Framework/Mono.framework/Versions/2.10.9/bin/dmcs ........
+</pre>
+
+<p>The result of this might seem like an overload of information but if you scroll around and find the actual error message from before, then pay attention to the parts above it. In our case it will detail that the compiler has problems with loading assemblies that are required and hence it cannot find the extension method we are using.</p>
+
+#thumbnail mono_log_level_umbraco_output.png The detailed debug information from the C# compiler in mono
+
+<p>The reason this happens is that the relationship between Umbraco and Examine (or namely UmbracoExamine) has a weird structure that results in circular references, so basically we have to copy dll's around between the projects to make it all work. There should be work in progress to remove these circular references in the umbraco source which sound great as copying DLL's around shouldn't be neccesary.</p>
+
+<p>To actually make the umbraco source compile i will have to copy like this for a number of the assemblies that UmbracoExamine references:</p>
+
+<pre class="shell">
+cp src/umbraco.cms/bin/Debug/cms.dll lib/cms.dll
+</pre>

@@ -1,0 +1,15 @@
+<h1>Today's errors running on the trunk</h1>
+<p>I did some work today with <a href="http://www.castleproject.org/monorail/index.html">MonoRail</a> and some of the tools from <a href="http://www.ayende.com/Blog/">Ayende</a>'s <a href="https://rhino-tools.svn.sourceforge.net/svnroot/rhino-tools/">repository</a> (which contains a lot of tools/code snippets/extensions etc he calls Rhino Tools). I build both things from trunk as well as nHibernate from trunk because I tried to figure out a lot of internal stuff, however this can give some problems from time to time so i thought i post the errors i encountered so someone in the same problems as me could google them. </p>  <p><strong>Problem 1</strong></p>  <p>The first problem was when starting a MonoRail site and it tried to render a View, it gave me an MonoRailException with the following text:</p>  <p><em>&quot;Error processing MonoRail request. Action Index on controller Home&quot;</em></p>  <p>And the inner exception gave me &quot;Error compiling Brail code&quot; and &quot;Internal compiler error: Value cannot be null. Parameter name: ns.&quot;</p>  <p>I realized that I had used assemblies from two different sources the Castle trunk and the Rhino-Tools trunk. Apparently the Brail view engine wasn't to happy with the version of Boo.Lang.Interpreter.dll from the rhino tools trunk, i haven't dug any deeper into why, but it seems a bit strange. </p>  <p><strong>Problem 2</strong></p>  <p>This time using ActiveRecord i got this ActiveRecordException:</p>  <p><em>&quot;Error adding information from class My.NamespaceName.ClassName to NHibernate.&quot;</em></p>  <p>Again a look at the Inner exceptions gave some more information from nHibernate itself: &quot;Could not compile the mapping document: (string)&quot; (MappingException) and&#160; last but not least i got:</p>  <p><em>&quot;The given key was not present in the dictionary.&quot;</em></p>  <p>Which i guess we all have seen at some times, but this time from the core of nHibernate. It happened in NHibernate.Dialect.Dialect.GetDialect() method, its pretty short so lets take a look:</p>  <p></p>  <pre class="code-csharp" name="code">public static Dialect GetDialect(IDictionary&lt;string  , string&gt; props)
+{
+	if (props == null)
+		throw new ArgumentNullException(&quot;props&quot;);
+	string dialectName = props[Environment.Dialect];
+	if (dialectName == null)
+	{
+		return GetDialect();
+	}
+
+	return InstantiateDialect(dialectName);
+}</pre>
+
+<p>It gets the properties from the configuration of nHibernate as an argument, and then tries to look up the dialect in these values but somehow it couldn't find my configuration of my Dialect, i checked it for misspellings but no luck, then I realized my properties was on the format &quot;hibernate.dialect&quot; but the Environment.Dialect constant was only &quot;dialect&quot;. Apparently this was changed a few weeks back, but had not cought my attention. Take a look at <a href="http://nhibernate.svn.sourceforge.net/viewvc/nhibernate/trunk/nhibernate/src/NHibernate/Cfg/Environment.cs?r1=2906&amp;r2=2919">this diff</a> if you wont take my word for it. </p>

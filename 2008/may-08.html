@@ -1,0 +1,50 @@
+<h1>BlogEngine.NET - Urlrewriting</h1>
+<p>So the first thing I usually do when reviewing web projects is to find the default entry page that the user would see. When doing this with BlogEngine.NET you find the default.aspx (obviously in most cases). The first thing in the Page_Load of this is the following code:</p>  <pre class="code-csharp" name="code">if (Request.RawUrl.ToLowerInvariant().Contains(&quot;/category/&quot;)){...}
+else if (Request.RawUrl.ToLowerInvariant().Contains(&quot;/author/&quot;)){...}
+else if (Request.RawUrl.ToLowerInvariant().Contains(&quot;?tag=&quot;)){...}
+//a couple of else if's more</pre>
+
+<p>So this makes it clear that the default.aspx page handles all listing of posts whether it is all in a category, all by an author or all having a specific tag. All these listings are requested using different URI's, to handle this an UrlRewrite HttpModule is implemented. If we look at some code in this UrlRewriter we will find:</p>
+
+<pre class="code-csharp" name="code">if (context.Request.Path.Contains(&quot;/blog.aspx&quot;)){...}
+else if (url.Contains(&quot;/POST/&quot;)){...}
+else if (url.Contains(&quot;/CATEGORY/&quot;)){...}
+else if (url.Contains(&quot;/AUTHOR/&quot;)){...}
+//a couple of else if's more</pre>
+
+<p>So what happens here is we delegate the responsibility for different URL's to be handled on different pages, the responsibilities redirected to the default page is afterwards on the default page once again delegated to different methods handling databinding because presentation is alike. This results in some parsing of the URL's is duplicated in the UrlRewriter and in the default.aspx.cs file. And furthermore the collection of all posts is iterated both in the UrlRewriter and on the pages, that seems silly. Why not let UrlRewriting do what its intended for: to forward information and then keep the processing on simple pages for specific requests to avoid the redundant parsing and iteration?</p>
+
+<p>I read an <a href="http://www.infoq.com/news/2007/11/BlogEngine">interview with the BlogEngine.NET founder on InfoQ</a> a while back, and it seems he has some issues with third party dependencies. I don't see the reason for this, if you can use a third party dependency too do a task it does well and have been doing in many projects already, why roll your own. So allow me to introduce <a href="http://www.urlrewriting.net">UrlRewritingNet.UrlRewrite</a></p>
+
+<p>UrlRewritingNet basically consists of a generic HttpHandler that rewrites based on rules you set up in a configuration section in your web.config file, so instead of having to change code to change rewrites, we change simple regular expressions in our configuration of UrlRewritingNet. So lets see the rules I set up for BlogEngine.NET:</p>
+
+<pre class="code-xml" name="code">&lt;configSections&gt;
+	&lt;section name=&quot;urlrewritingnet&quot;
+		restartOnExternalChanges=&quot;true&quot;
+		requirePermission=&quot;false&quot;
+		type=&quot;UrlRewritingNet.Configuration.UrlRewriteSection, UrlRewritingNet.UrlRewriter&quot;
+	/&gt;
+&lt;/configSections&gt;
+&lt;urlrewritingnet xmlns=&quot;http://www.urlrewriting.net/schemas/config/2006/07&quot;&gt;
+	&lt;rewrites&gt;
+		&lt;add name=&quot;categoryRule&quot; virtualUrl=&quot;^~/category/(.*).aspx&quot; destinationUrl=&quot;~/category.aspx?name=$1&quot;/&gt;
+		&lt;add name=&quot;blogRule&quot; virtualUrl=&quot;^~/blog.aspx&quot; destinationUrl=&quot;~/default.aspx?blog=true&quot;/&gt;
+		&lt;add name=&quot;authorRule&quot; virtualUrl=&quot;^~/author/(.*).aspx&quot; destinationUrl=&quot;~/author.aspx?name?=$1&quot;/&gt;
+		&lt;add name=&quot;postRuleDate&quot; virtualUrl=&quot;^~/post/(\d{4})/([0-1]?\d)/([0-3]?\d)/(.*).aspx&quot;
+			destinationUrl=&quot;~/post.aspx?year=$1&amp;amp;month=$2&amp;amp;day=$3&amp;amp;name=$4&quot;/&gt;
+		&lt;add name=&quot;postRuleMonth&quot; virtualUrl=&quot;~/post/(\d{4})/([0-1]?\d)/(.*).aspx&quot;
+			destinationUrl=&quot;~/post.aspx?year=$1&amp;amp;month=$2&amp;amp;name=$3&quot;/&gt;
+		&lt;add name=&quot;postRuleTitle&quot; virtualUrl=&quot;~/post/(.*).aspx&quot; destinationUrl=&quot;~/post.aspx?name=$1&quot;/&gt;
+		&lt;add name=&quot;pageRule&quot; virtualUrl=&quot;~/page/(.*).aspx&quot; destinationUrl=&quot;~/page.aspx?name=$1&quot;/&gt;
+		&lt;add name=&quot;calendarRule&quot; virtualUrl=&quot;~/calendar/.*&quot; destinationUrl=&quot;~/calendar.aspx&quot;/&gt;
+	&lt;/rewrites&gt;
+&lt;/urlrewritingnet&gt;
+&lt;system.web&gt;
+	&lt;httpModules&gt;
+		&lt;add name=&quot;UrlRewriteModule&quot; type=&quot;UrlRewritingNet.Web.UrlRewriteModule, UrlRewritingNet.UrlRewriter&quot;/&gt;
+	&lt;/httpModules&gt;
+&lt;/system.web&gt;</pre>
+
+<p>The above handles rewriting of Url's nothing more, nothing less. The existing BlogEngine.NET UrlRewrite have some business logic built in, for instance to retrieve the identifier of posts and sending them to the page that shows the post. I feel this doesn't belong in an UrlRewriter so I will implement this logic on the pages that actually handles the requests instead of on the UrlRewriter.</p>
+
+<p>So this was the first step, now we can move the if statement out of our default.aspx and let it concentrate on showing the default content which is the frontpage of the blog and the other pages concentrate on their tasks. How to implement the pages referred to in the mapping above will follow in the next post.</p>

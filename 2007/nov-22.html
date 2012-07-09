@@ -1,0 +1,29 @@
+<h1>Misunderstood common concepts in your programming language</h1>
+<p>
+As we all know we have a range of access modifiers in C#: <em>public</em>, <em>protected</em>, <em>internal</em> and <em>private</em>. These can be used as a single word or in a single case be combined: that is <em>internal protected</em> (and the other way around <em>protected internal</em>). 
+</p>
+<p>
+During a conversation with a friend yesterday regarding naming of intance variables we ended up discussing the <em>internal protected</em> modifier and I argued that it meant that it was <em>internal <strong>or </strong>protected</em> while my friend figured it meant <em>internal <strong>and </strong>protected</em>. That is he wouldn&#39;t believe that it could be accessed from a subclass outside the assembly. I was a bit shaky in my belief as it isn&#39;t the access-modifier i use the most, so the documentation to the help. And in the single line describing it the word <strong>or</strong> is used. 
+</p>
+<p>
+I asked three other people who work with C# at a daily baiss, and none of the three answered that i could access an internal protected method/property/etc. from outside the assembly. So to clarify the following code would be valid even though the two namespaces are in different assemblies: 
+</p>
+<pre class="code-csharp" name="code">
+//Assembly 1
+namespace MyFirstNamespace{
+	public class MyFirstClass {
+		internal protected void MyMethod(){
+			//Implementation
+		}
+	}
+}
+
+//Assembly 2
+namespace MySecondNamespace{
+	public class MySecondClass : MyFirstClass{
+		public void MySecondMethod(){
+			this.MyMethod();
+		}
+	}
+}
+</pre>

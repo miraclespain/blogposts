@@ -1,0 +1,65 @@
+<h1>Subqueries in nHibernate and testing result for NULL</h1>
+<p>
+If you haven&#39;t noticed yet i like working with nHibernate, however once in a while you hit something not implemented in nHibernate (yet!). 
+</p>
+<p>
+A while ago i worked on a project using nHibernate and should construct a query, this&nbsp;included a&nbsp;subselect which shouldn&#39;t be a problem, nHibernate has great support for many complex cases of querying. 
+</p>
+<p>
+To visualize the problem i stumbled upon during the creation of this query, think about an Account with a number of Deposits associated. We want to retrieve all Accounts which have a balance&nbsp;below a certain amount. Sorry for the example, this could be done in a number of ways to avoid using subqueries, but im not very good at making up examples and the specific domain is a little complex. 
+</p>
+<p>
+Anyways here is some sample code: 
+</p>
+<pre class="code-csharp" name="code">
+public void     TestIfAccountIsBelowLimit()
+{
+    using(ISession s = OpenSession())
+    {
+        using(ITransaction tx = s.BeginTransaction())
+        {
+            Account account1 = new Account(&quot;Account 1&quot;);
+            account1.Deposits.Add(new Deposit(10));
+            account1.Deposits.Add(new Deposit(20));
+            Account account2 = new Account(&quot;Account 2&quot;);
+            account2.Deposits.Add(new Deposit(40));
+            s.Save(account1);
+            s.Save(account2);
+            tx.Commit();
+        }
+    }
+
+    using(ISession s = OpenSession())
+    {
+        //Set up a criteria query to get the sum of all deposits
+        DetachedCriteria subquery = DetachedCriteria.For()
+            .SetProjection(Projections.Sum(&quot;Amount&quot;))
+            .Add(Expression.EqProperty(&quot;a.id&quot;, &quot;Account.id&quot;));
+
+        //USe subquery to fint all accounts with less than 35 in total deposits
+        IList accounts = s.CreateCriteria(typeof (Account), &quot;a&quot;)
+            .Add(Subqueries.Lt(35, subquery))
+            .List();
+
+        Assert.AreEqual(1, accounts.Count);
+    }
+}
+</pre>
+<p>
+But if i add another account to the test, without any deposits, the SUM would return NULL and hence not be less than 35 (Again sorry for the example this could be solved using exists). But to get to the point, nHibernate has no way of checking if the result of a subquery is null as far as i have figured out, so the SQL expressed like this: 
+</p>
+<pre class="sql" name="code">
+SELECT * FROM Foo WHERE (SELECT SUM(x) FROM Bar WHERE ...) IS NULL
+</pre>
+<p>
+Can&#39;t be expressed using nHibernate. So the result of my specific case ended with using a custom SQLProjection(Where i specify SQL that is included directly in the generated&nbsp;SQL): 
+</p>
+<pre class="code-csharp" name="code">
+criteria.SetProjection(Projections.SqlProjection(&quot;COALESCE(SUM(column),0)&quot;));
+</pre>
+<p>
+It works but it isn&#39;t pretty so i hope that <a href="http://www.covalentsw.com:8080/browse/NH-1248">my patch for adding Subqueries.IsNull()</a> will be applied some day to the nHibernate source :-) 
+</p>
+<p>
+&nbsp;
+</p>

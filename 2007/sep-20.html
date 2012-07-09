@@ -1,0 +1,29 @@
+<h1>Detached objects in nHibernate and Lazy loading</h1>
+<p>
+Hopefully we all know what the definition of persistent and transient objects are when speaking of Object/Relational Mapping, if not here is a quick description: A <strong>Transient </strong>object is an instance either fetched from the database and then deleted at a later point or an object&nbsp;not fetched using the O/R mapper. For instance if you create an instance of a class using its defualt empty constructor this will be a transient object. A <strong>Persistent</strong> object is an instance fetched from the O/R mapper which contains data from the database, the O/R mapper tracks changes to this instance so it can be syncronized with the underlying datastore later. 
+</p>
+<p>
+However a third &quot;type&quot; of objects exist when working with for instance nHibernate, a detached object. A <strong>Detached </strong>object<strong>&nbsp;</strong>is a persistent instance that has lost its association with the O/R mapper(The O/R mapper no longer knows the object is probably a better way to say it as the object knows nothing about the O/R mapper), in the case of nHibernate this would be that the ISession that you used to fetch the object is no longer available/open. This has some consequences: 
+</p>
+<ol>
+	<li>The object can not be saved to the database like you normally do </li>
+	<li>If the object has properties that needs to be initialized from the database using lazy-loading this will fail </li>
+</ol>
+<p>
+When we use nHibernate in a web context, that is for developing a website, the most common thing is to use a ISession pr request, but what if we want a persistent object to live across request? That could be in a either Application, Session or Viewstate. First of all we have to think if that&#39;s&nbsp; really what we want, in most cases it doesn&#39;t make much sense, but in some cases its just what you want to do! Fortunately nHibernate provides features to reattach a detached instance to a new ISession, it as simple as: 
+</p>
+<pre class="code-csharp" name="code">
+ISession.Lock(myDetachedInstance, NHibernate.LockMode.None); 
+</pre>
+<p>
+Of course this is only sound to do if you are sure the object has not updated between requests, if there is a chance it has changed you can use the Update method instead: 
+</p>
+<pre class="code-csharp" name="code">
+ISession.Update(myDetachedInstance); 
+</pre>
+<p>
+After reattaching an instance, properties that are lazy initialized&nbsp;can be accessed normally and the data is loaded lazy using the new ISession. 
+</p>
+<p>
+But be aware that Session is no place for caching general data as it is pr-user, but instead you can use a second-level cache. This is supported in nHibernate using the different cache providers found in the NHibernate.Caches project, in web context this is extremly helpful because the second-level cache caches data across multiple requests and multiple ISession&#39;s, so &quot;frequently-used rarely-changed data&quot; can be retrieved from memory instead of hitting the database. 
+</p>

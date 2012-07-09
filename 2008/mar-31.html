@@ -1,0 +1,195 @@
+<h1>Fluent interfaces. Make it easy to do it right</h1>
+<p>A fluent interface is a way to make what we could call an &quot;inline&quot; domain specific language using the power of the tools you already have at hand. Often when speaking statically typed object-oriented languages its a way to build an object graph or manipulate the state of an object in a more readable fashion. A good example on the latter was <a href="http://improve.dk/blog/2007/10/20/xmldocument-fluent-interface">posted by my friend Mark S. Rasmussen some time ago</a>, he made a fluent interface to use the XmlDocument class. Marks sample is pretty straight forward and there is nothing wrong with it but I will use it to illustrate a point about fluent interfaces.</p>  <p>As a developer using Visual Studio you are probably hooked on intellisense so when creating fluent interfaces I feel its important to make it easy to do it right, that is do not expose things that makes no sense. An example using Marks fluent interface could be this:</p>  <pre class="code-csharp" name="code">XmlOutput output = new XmlOutput().Attribute(&quot;Foo&quot;, &quot;bar&quot;);</pre>
+
+<p>This makes no sense when thinking about the domain that the fluent interface operates in is XML. But its legal code to write based on the &quot;rules&quot; of the fluent interface. Come to think of it I am pretty sure that it would give us an exception. So isn't it worth to invest a little time in making it easy to do the right thing when using our fluent interfaces?&#160; Some would argue that every developer should know that the above makes no sense, but then again if we used this code to generate XML in an real world application the usage of the fluent interface might span several lines and the nonsense may not be so easy to spot as the above simple example.</p>
+
+<p>So the point here is that when working with fluent interfaces we might as well help the developer avoiding simple mistakes. To do this we need to make some rules for the domain that our fluent interface is operating in, in the case of the XmlOutput fluent interface these could be: &quot;XML must always start with either a node or a declaration&quot;, &quot;A declaration must always be followed by a node&quot;, &quot;It makes no sense to add attributes or textual content when not in the context of a node&quot;. </p>
+
+<p>You could probably find more rules to apply but I will leave that to your imagination. Its worth noting that some logic can be hidden in our fluent interface, I could have made the rule that all my XML should have a declaration. So how to implement this, its pretty simple we define the various &quot;steps&quot; as interfaces, this might seem a little tedious but again I assume that its worth the effort to construct a solid fluent interface as it is a component suitable for reusability.</p>
+
+<pre class="code-csharp" name="code">public interface ICanWriteNode
+{
+    IAmInNode Node(string name);
+    XmlDocument GetXmlDocument()
+    string GetOuterXml()
+}
+
+
+public interface IStartDocument : ICanWriteNode
+{
+    ICanWriteNode XmlDeclaration(string version, string encoding, string standalone);
+    ICanWriteNode XmlDeclaration();
+}
+
+public interface IAmInNode : ICanWriteNode
+{
+    IAmInNode Attribute(string name, string value);
+    IAmInNode InnerText(string text, bool useCData);
+    IAmInNode InnerText(string text);
+    ICanWriteNode Within();
+    IAmInNode EndWithin();
+}</pre>
+
+<p>Note that we define the return types as our interfaces so the user is limited to the functionality we decide after calling the methods. The above is just an example enforcing the simple rules I mentioned earlier and to make it work I have changed return types in Marks methods to correspond to the above and introduced a factory method:</p>
+
+<pre class="code-csharp" name="code">public string GetOuterXml()
+{
+	return xd.OuterXml;
+}</pre>
+
+<p>&#160;</p>
+
+<p>So when we start with a fresh instance we can only do the &quot;legal&quot; actions:</p>
+
+#thumbnail fluent_step1.png Step 1
+
+<p>And when we have called XmlDeclaration we only have one option left:</p>
+
+#thumbnail fluent_step2.png Step 2
+
+<p>And when the rootnode is written we have almost all options available again:</p>
+
+#thumbail fluent_step3.png Step 3
+
+<p>One thing to note here is that we have access to a method that is nonsense, that is EndWithin, this is because we can't track how deeply nested these block are at compile time. This can be solved in a few other ways but I decided to keep it as is as this was just a quick example of how to make it easy to do it right using fluent interfaces.</p>
+
+<p>One last thing I might want to mention is that you can not be prepared for all cases up front, so if you realize that your rules for the fluent interface are wrong you can just change them, it shouldn't affect existing code as long as you only add method signatures to your interfaces. Another way of achieving this is to cast the returned types to XmlOutput and do what you want that way, but that would be a code smell that either your fluent interface is based on some weird logic or you are trying to use it in a way that was not intended.</p>
+
+<p>For completeness here is the full source of the fluent interface, remember that all credit for this goes to <a href="http://improve.dk">Mark</a> I just used it as an example:</p>
+
+<pre class="code-csharp" name="code">public class XmlOutput : IStartDocument, IAmInNode
+{
+
+    public static IStartDocument Create()
+    {
+        return new XmlOutput();
+    }
+
+    private XmlOutput()
+    {
+        
+    }
+
+    XmlDocument xd = new XmlDocument();
+
+    Stack&lt;XmlNode&gt; nodeStack = new Stack&lt;XmlNode&gt;();
+
+    bool nextNodeWithin;
+
+    XmlNode currentNode;
+
+    public string GetOuterXml()
+    {
+        return xd.OuterXml;
+    }
+
+    public XmlDocument GetXmlDocument()
+    {
+        return xd;
+    }
+
+    public ICanWriteNode Within()
+    {
+        nextNodeWithin = true;
+
+        return this;
+    }
+
+    public IAmInNode EndWithin()
+    {
+        if (nextNodeWithin)
+            nextNodeWithin = false;
+        else
+            nodeStack.Pop();
+
+        return this;
+    }
+
+    public ICanWriteNode XmlDeclaration() { return XmlDeclaration(&quot;1.0&quot;, &quot;utf-8&quot;, &quot;&quot;); }
+
+    public ICanWriteNode XmlDeclaration(string version, string encoding, string standalone)
+    {
+        XmlDeclaration xdec = xd.CreateXmlDeclaration(version, encoding, standalone);
+        xd.AppendChild(xdec);
+
+        return this;
+    }
+
+    public IAmInNode Node(string name)
+    {
+        XmlNode xn = xd.CreateElement(name);
+
+        // If nodeStack.Count == 0, no nodes have been added, thus the scope is the XmlDocument itself.
+        if (nodeStack.Count == 0)
+        {
+            xd.AppendChild(xn);
+
+            // Automatically change scope to the root DocumentElement.
+            nodeStack.Push(xn);
+        }
+        else
+        {
+            // If this node should be created within the scope of the current node, change scope to the current node before adding the node to the scope element.
+            if (nextNodeWithin)
+            {
+                nodeStack.Push(currentNode);
+
+                nextNodeWithin = false;
+            }
+
+            nodeStack.Peek().AppendChild(xn);
+        }
+
+        currentNode = xn;
+
+        return this;
+    }
+
+    public IAmInNode InnerText(string text)
+    {
+        return InnerText(text, false);
+    }
+
+    public IAmInNode InnerText(string text, bool useCData)
+    {
+        if (useCData)
+            currentNode.AppendChild(xd.CreateCDataSection(text));
+        else
+            currentNode.AppendChild(xd.CreateTextNode(text));
+
+        return this;
+    }
+
+    public IAmInNode Attribute(string name, string value)
+    {
+        XmlAttribute xa = xd.CreateAttribute(name);
+        xa.Value = value;
+
+        currentNode.Attributes.Append(xa);
+
+        return this;
+    }
+}
+
+public interface IAmInNode : ICanWriteNode
+{
+    IAmInNode Attribute(string name, string value);
+    IAmInNode InnerText(string text, bool useCData);
+    IAmInNode InnerText(string text);
+    ICanWriteNode Within();
+    IAmInNode EndWithin();
+}
+
+public interface ICanWriteNode
+{
+    IAmInNode Node(string name);
+    XmlDocument GetXmlDocument()
+    string GetOuterXml()
+}
+
+
+public interface IStartDocument : ICanWriteNode
+{
+    ICanWriteNode XmlDeclaration(string version, string encoding, string standalone);
+    ICanWriteNode XmlDeclaration();
+}</pre>

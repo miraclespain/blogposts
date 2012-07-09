@@ -1,0 +1,254 @@
+<h1>Writing a calculator in C# using Irony</h1>
+<p>
+My <a href="http://improve.dk/">friend Mark</a> wrote <a href="http://improve.dk/blog/2009/09/30/writing-a-calculator-in-csharp-using-sablecc">a post last week about implementing a calculating compiler using SableCC</a>. I have worked with <a href="http://sablecc.org/">SableCC</a> on a project where we needed to parse C# code and I have to admit I don&#39;t recall SableCC as a friendly framework, and reading Mark&#39;s post proves my memory right.
+</p>
+<p>
+First of Mark&#39;s grammar is very specific to SableCC, a lot af tricks is made to make SableCC accept the grammar and furthermore the grammar is complicated further by handling operator precedence. If we disregard performance considerations and focus on an easily understandable and maintainable compiler structure our grammar for our parser generator ideally would look very much like the Extended Backus Naur Format (EBNF) of the language.
+</p>
+<pre class="code-csharp" name="code">
+number = digit+ | digit+ &#39;.&#39; digit+
+lparen = &#39;(&#39;
+rparen = &#39;)&#39;
+binop = &#39;+&#39; | &#39;-&#39; | &#39;/&#39; | &#39;*&#39; | &#39;%&#39;
+funcname = letter+
+expression := lparen expression rparen | expression operator expression | funcname lparen expression rparen | number
+</pre>
+<p>
+<a href="http://irony.codeplex.com/">Irony</a> is like SableCC a scanner/parser generator but it is implemented as an internal DSL in C# for specifying grammars on a format very close to EBNF. The code is specified in the constructor body of a class inherting from Irony&#39;s Grammar class. The EBNF described above (slightly modified for readability) looks like this:
+</p>
+<pre class="code-csharp" name="code">
+public class SimpleCalcGrammar : Irony.Parsing.Grammar{
+&nbsp;&nbsp;&nbsp;&nbsp;public SimpleCalcGrammar(){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var number = TerminalFactory.CreateCSharpNumber(&quot;number&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var identifier = TerminalFactory.CreateCSharpIdentifier(&quot;identifier&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var expression = new NonTerminal(&quot;expression&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var binexpr = new NonTerminal(&quot;binexpr&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var parexpr = new NonTerminal(&quot;parexpr&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var fncall = new NonTerminal(&quot;fncall&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var binop = new NonTerminal(&quot;binop&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expression.Rule =  parexpr | binexpr | number | fncall;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;parexpr.Rule = &quot;(&quot; + expression + &quot;)&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;binexpr.Rule = expression + binop + expression;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;binop.Rule = Symbol(&quot;+&quot;) | &quot;-&quot; | &quot;/&quot; | &quot;*&quot; | &quot;%&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;fncall.Rule = identifier + &quot;(&quot; + expression + &quot;)&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;this.Root = expression;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;//...
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+</pre>
+<p>
+The first few lines are initialization of our Terminals and Productions, this is pretty trivial however a few things is worth noting. Irony is a very rich framework that provides a lot of prebaked functionality, one of these is the TerminalFactory for creating typically used terminals, in our case we use C#&#39;s format for numbers and identifiers, that means we out of the bag get support in our language for suffix on numbers for specifying types etc.
+</p>
+<p>
+The interresting part is after initialization, here we set up rules for the productions. Irony relies heavily on operator overloading so using our productions and the operators from EBNF we can describe the language pretty straight forward. Lastly we specify what productions is the root of our program, that is the production that contains the entry point for the whole language.
+</p>
+<p>
+Next up we need to handle operator precedence, fortunately Irony knows that this is a common challenge when developing languages and hence it supports registering our operators and their precedence using the following code:
+</p>
+<pre class="code-csharp" name="code">
+RegisterOperators(1, &quot;+&quot;, &quot;-&quot;);
+RegisterOperators(2, &quot;*&quot;, &quot;/&quot;, &quot;%&quot;);
+</pre>
+<p>
+Having specified this we have a working parser that can be used like this:
+</p>
+<pre class="code-csharp" name="code">
+SimpleCalcGrammar g = new SimpleCalcGrammar();
+Parser p = new Parser(g);
+ParseTree t = p.Parse(&quot;25-37+2*(1.22+cos(5))*sin(5)*2+5%2*3*sqrt(5+2)&quot;);
+</pre>
+<p>
+This gives us a parse tree that is pretty rough in the edges and hard to work with, what we want instead is a pretty Abstract Syntax Tree that contains exactly the information we need. On our NonTerminal instances we can specify which nodes they should be transformed into, fortunately Irony contains some of the basic nodes that are needed in many languages for instance the binary expression node, so we can specify the built-in BinExprNode on our binexpr NonTerminal like this:
+</p>
+<pre class="code-csharp" name="code">
+var binexpr = new NonTerminal(&quot;binexpr&quot;, typeof(BinExprNode));
+</pre>
+<p>
+For us to parse the language we need one aditional node in our AST, that is the FunctionCall node (the observant reader might have noticed i have choosen to implement an openended grammar that allows for extending with new built-in functions without modifying the grammar). Irony has a AST node for function calls built-in but for the sake of the example i will show a custom implementation here:
+</p>
+<pre class="code-csharp" name="code">
+public class FunctionCallNode : AstNode{
+&nbsp;&nbsp;&nbsp;&nbsp;public string Name;
+&nbsp;&nbsp;&nbsp;&nbsp;public AstNode Argument;
+&nbsp;&nbsp;&nbsp;&nbsp;public override void Init (Irony.Parsing.ParsingContext context, Irony.Parsing.ParseTreeNode treeNode)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;base.Init (context, treeNode);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Name = treeNode.ChildNodes[0].FindTokenAndGetText(); 
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Argument = AddChild(&quot;Arg&quot;, treeNode.ChildNodes[1]);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;AsString = Name; 
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+//Adding the node to our function call node
+var fncall = new NonTerminal(&quot;fncall&quot;, typeof(FunctionCallNode));
+</pre>
+<p>
+So implementing our own AST nodes is pretty simple, and Irony has a rich infrastructure for getting text of tokens and adding childnodes as you can see in the sample. Because our parse tree contains a lot of &quot;garbage&quot; that we don&#39;t want transferred to our AST, so we need to inform Irony to import these, this is done by marking nonterminals as transient like this:
+</p>
+<pre class="code-csharp" name="code">
+MarkTransient(parexpr, expression);
+</pre>
+<p>
+And at last we need to set a flag so that the parser generates the Ast using the following line of code:
+</p>
+<pre class="code-csharp" name="code">
+LanguageFlags = LanguageFlags.CreateAst;
+</pre>
+<p>
+The next step is to actually work with the AST for sementic analysis, codegeneration or as in our case execution of the calculation. Mark did this using a visitor and Irony&#39;s AST supports visitors aswell, so we can make the &quot;PrintVisitor&quot; mark used for debugging like this:
+</p>
+<pre class="code-csharp" name="code">
+public class PrintVisitor : IAstVisitor{
+&nbsp;&nbsp;&nbsp;&nbsp;int indentation = 0;
+&nbsp;&nbsp;&nbsp;&nbsp;public void BeginVisit (AstNode node)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;for (int i = 0;i&lt;indentation ;i++ ) {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Console.Write(&quot;\t&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Console.WriteLine(node.ToString());
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;indentation++;
+&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;public void EndVisit (AstNode node)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;indentation--;
+&nbsp;&nbsp;&nbsp;&nbsp;}&nbsp;&nbsp;&nbsp;&nbsp;
+}
+</pre>
+<p>
+Using a visitor looks like this:
+</p>
+<pre class="code-csharp" name="code">
+SimpleCalcGrammar g = new SimpleCalcGrammar();
+Parser p = new Parser(g);
+ParseTree t = p.Parse(&quot;25-37+2*(1.22+cos(5))*sin(5)*2+5%2*3*sqrt(5+2)&quot;);
+var astnode = (AstNode)t.Root.AstNode
+astnode.AcceptVisitor(new PrintVisitor());
+</pre>
+<p>
+And the result of this operation is:
+</p>
+<pre class="code-csharp" name="code">
++(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;Arg: +(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: -(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:25
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:37
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: *(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: *(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: *(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:2
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: +(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:1.22
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: cos
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:5
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: sin
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:5
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:2
+&nbsp;&nbsp;&nbsp;&nbsp;Arg: *(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: *(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: %(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:5
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:2
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:3
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: sqrt
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg: +(operator)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:5
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Arg:2
+</pre>
+<p>
+However, there is no need for us to create a printvisitor, Irony comes with an UI that allows us to work with our grammar and can parse samples and show us AST, parsertrace with parserstatec and much more, this is very useful to see what the grammar actually does under the covers (shift/reduce). But basically we can go ahead and implement pretty much the same visitor as Mark have used for SableCC, but let&#39;s do something different. Irony has support for a basic LanguageRuntime, and actually for a basic interpreter aswell. So if we tell our AST-nodes how they should evaluate themselves we get all the infrastructure given to us by Irony!
+</p>
+<p>
+So lets override the Evaluate method on our FunctionCallNode so it can be used in Irony&#39;s interpreter infrastructure:
+</p>
+<pre class="code-csharp" name="code">
+public class FunctionCallNode : AstNode{
+&nbsp;&nbsp;&nbsp;&nbsp;//....
+&nbsp;&nbsp;&nbsp;&nbsp;public override void Evaluate (Irony.Interpreter.EvaluationContext context, Irony.Ast.AstMode mode)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Argument.Evaluate(context, AstMode.Read); //Evaluate the argument the result is saved in context.Data
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;double input = Convert.ToDouble(context.Data[0]);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;double result;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if(Name == &quot;sqrt&quot;){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;result = Math.Sqrt(input);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else if(Name == &quot;cos&quot;){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;result = Math.Cos(input);&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else if(Name == &quot;sin&quot;){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;result = Math.Sin(input);&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;throw new NotSupportedException(&quot;Method &quot; + Name + &quot; not supported&quot;);&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;context.Data.Replace(1, result); //Replace the argument value on the stack with the result of the function call
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+</pre>
+<p>
+Yes, in real life our methods would be in a method table and not hardcoded here, this is just to demonstrate the functionality of the interpreter in irony. To use the Interpreter we write code like this:
+</p>
+<pre class="code-csharp" name="code">
+var interpreter = new Irony.Interpreter.ScriptInterpreter(new LanguageData(new SimpleCalcGrammar()));
+interpreter.Evaluate(&quot;25-37+2*(1.22+cos(5))*sin(5)*2+5%2*3*sqrt(5+2)&quot;);
+Console.WriteLine(interpreter.EvaluationContext.LastResult);
+</pre>
+<p>
+Voila, done with the code that corresponds to Mark&#39;s sample and the result of running the above is: -9.83033874894108 and the built-in Irony interpreter handle almost everything for us leaving me with only 57 lines of pure C# code:
+</p>
+<pre class="code-csharp" name="code">
+public class FunctionCallNode : AstNode{
+&nbsp;&nbsp;&nbsp;&nbsp;public string Name;
+&nbsp;&nbsp;&nbsp;&nbsp;public AstNode Argument;
+&nbsp;&nbsp;&nbsp;&nbsp;public override void Init (Irony.Parsing.ParsingContext context, Irony.Parsing.ParseTreeNode treeNode)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;base.Init (context, treeNode);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Name = treeNode.ChildNodes[0].FindTokenAndGetText();
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Argument = AddChild(&quot;Arg&quot;, treeNode.ChildNodes[1]);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;AsString = Name;
+&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;public override void Evaluate (Irony.Interpreter.EvaluationContext context, Irony.Ast.AstMode mode)
+&nbsp;&nbsp;&nbsp;&nbsp;{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Argument.Evaluate(context, AstMode.Read);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;double input = Convert.ToDouble(context.Data[0]);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;double result;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if(Name == &quot;sqrt&quot;){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;result = Math.Sqrt(input);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else if(Name == &quot;cos&quot;){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;result = Math.Cos(input);&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else if(Name == &quot;sin&quot;){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;result = Math.Sin(input);&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}else{
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;throw new NotSupportedException(&quot;Method &quot; + Name + &quot; not supported&quot;);&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;context.Data.Replace(1, result);
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+public class SimpleCalcGrammar : Irony.Parsing.Grammar{
+&nbsp;&nbsp;&nbsp;&nbsp;public SimpleCalcGrammar(){
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var number = TerminalFactory.CreateCSharpNumber(&quot;number&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var identifier = TerminalFactory.CreateCSharpIdentifier(&quot;identifier&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var expression = new NonTerminal(&quot;expression&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var binexpr = new NonTerminal(&quot;binexpr&quot;, typeof(BinExprNode));
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var parexpr = new NonTerminal(&quot;parexpr&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var fncall = new NonTerminal(&quot;fncall&quot;, typeof(FunctionCallNode));
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;var binop = new NonTerminal(&quot;binop&quot;, &quot;operator&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expression.Rule =  parexpr | binexpr | number | fncall;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;parexpr.Rule = &quot;(&quot; + expression + &quot;)&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;binexpr.Rule = expression + binop + expression;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;binop.Rule = Symbol(&quot;+&quot;) | &quot;-&quot; | &quot;/&quot; | &quot;*&quot; | &quot;%&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;fncall.Rule = identifier + &quot;(&quot; + expression + &quot;)&quot;;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;RegisterPunctuation(&quot;(&quot;,&quot;)&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;RegisterOperators(1, &quot;+&quot;, &quot;-&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;RegisterOperators(2, &quot;*&quot;, &quot;/&quot;, &quot;%&quot;);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MarkTransient(parexpr, expression);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;this.Root = expression;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;this.LanguageFlags = LanguageFlags.CreateAst;
+&nbsp;&nbsp;&nbsp;&nbsp;}
+}
+</pre>
